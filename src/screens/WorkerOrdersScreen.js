@@ -9,7 +9,8 @@ import {
   RefreshControl,
   Linking,
   Alert,
-  Platform
+  Platform,
+  useWindowDimensions
 } from 'react-native';
 import {
   Phone,
@@ -22,17 +23,26 @@ import {
   LogOut,
   RefreshCw,
   ChevronRight,
-  UserCheck
+  UserCheck,
+  CheckCheck,
+  Navigation,
+  Inbox,
+  Play,
+  RotateCcw
 } from 'lucide-react-native';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../services/api';
 import { colors } from '../theme/colors';
 
 export default function WorkerOrdersScreen({ onSelectOrder, onOpenDispatcher }) {
-  const { user, logout, isOwner, isDispatcher } = useAuth();
+  const { user, logout, isOwner, isDispatcher, isSuperAdmin } = useAuth();
+  const { width } = useWindowDimensions();
+  const isDesktop = width >= 800;
+
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [actionLoading, setActionLoading] = useState(null);
 
   const fetchOrders = useCallback(async () => {
     if (!user?.id) return;
@@ -49,17 +59,19 @@ export default function WorkerOrdersScreen({ onSelectOrder, onOpenDispatcher }) 
 
   useEffect(() => {
     fetchOrders();
-    // Periodično osvežavanje naloga na svakih 15 sekundi
     const timer = setInterval(fetchOrders, 15000);
     return () => clearInterval(timer);
   }, [fetchOrders]);
 
-  const handleUpdateStatus = async (orderId, newStatus) => {
+  const handleUpdateStatus = async (orderId, newStatus, reason = '') => {
+    setActionLoading(orderId);
     try {
-      await api.updateOrderStatus(orderId, newStatus, user.id);
+      await api.updateOrderStatus(orderId, newStatus, user.id, '', reason);
       await fetchOrders();
     } catch (err) {
       Alert.alert('Greška', err.message || 'Neuspešna promena statusa.');
+    } finally {
+      setActionLoading(null);
     }
   };
 
@@ -71,7 +83,7 @@ export default function WorkerOrdersScreen({ onSelectOrder, onOpenDispatcher }) 
 
   const handleOpenNavigation = (lat, lng, address) => {
     if (!lat || !lng) {
-      Alert.alert('Lokacija', 'GPS koordinate adrese nisu definisane.');
+      Alert.alert('Lokacija', 'GPS koordinate adrese nisu unete.');
       return;
     }
     const label = encodeURIComponent(address || 'Klijent');
@@ -83,35 +95,89 @@ export default function WorkerOrdersScreen({ onSelectOrder, onOpenDispatcher }) 
     Linking.openURL(url);
   };
 
+  // Standardizovana značka statusa sa bojom i ikonicom
   const getStatusBadge = (status) => {
     switch (status) {
-      case 'U_RADU':
-        return { label: 'U RADU', bg: colors.warningLight, text: colors.warning, border: colors.warning };
-      case 'NA_PUTU':
-        return { label: 'NA PUTU', bg: 'rgba(2, 132, 199, 0.12)', text: colors.primary, border: colors.primary };
-      case 'ZAVRSENO':
-        return { label: 'ZAVRŠENO', bg: colors.successLight, text: colors.success, border: colors.success };
       case 'DODELJENO':
-        return { label: 'DODELJENO', bg: '#F1F5F9', text: '#475569', border: '#CBD5E1' };
+        return {
+          step: 1,
+          label: '1. ČEKA PRIHVATANJE',
+          bg: '#F1F5F9',
+          color: '#475569',
+          border: '#CBD5E1',
+          icon: Inbox
+        };
+      case 'PRIHVACENO':
+        return {
+          step: 2,
+          label: '2. PRIHVAĆENO (SPREMAN)',
+          bg: '#E0F2FE',
+          color: '#0284C7',
+          border: '#BAE6FD',
+          icon: CheckCheck
+        };
+      case 'NA_PUTU':
+        return {
+          step: 3,
+          label: '3. NA PUTU KA ADRESI',
+          bg: '#EEF2FF',
+          color: '#4F46E5',
+          border: '#C7D2FE',
+          icon: Truck
+        };
+      case 'U_RADU':
+        return {
+          step: 4,
+          label: '4. U RADU NA LOKACIJI',
+          bg: '#FEF3C7',
+          color: '#D97706',
+          border: '#FDE68A',
+          icon: Wrench
+        };
+      case 'ODLOZENO':
+        return {
+          step: 0,
+          label: 'ODLOŽEN NALOG',
+          bg: '#FEE2E2',
+          color: '#DC2626',
+          border: '#FECACA',
+          icon: AlertTriangle
+        };
+      case 'ZAVRSENO':
+        return {
+          step: 5,
+          label: '5. ZAVRŠENO I OVERENO',
+          bg: '#DEF7EC',
+          color: colors.success,
+          border: '#BCF0DA',
+          icon: CheckCircle
+        };
       default:
-        return { label: status, bg: '#F1F5F9', text: '#64748B', border: '#E2E8F0' };
+        return {
+          step: 0,
+          label: status,
+          bg: '#F1F5F9',
+          color: '#64748B',
+          border: '#E2E8F0',
+          icon: Clock
+        };
     }
   };
 
-  const totalAssigned = orders.filter(o => o.status !== 'ZAVRSENO' && o.status !== 'STORNO').length;
-  const inProgress = orders.filter(o => o.status === 'U_RADU' || o.status === 'NA_PUTU').length;
+  const totalOrders = orders.length;
+  const inProgress = orders.filter(o => ['PRIHVACENO', 'NA_PUTU', 'U_RADU'].includes(o.status)).length;
   const completedToday = orders.filter(o => o.status === 'ZAVRSENO').length;
 
   const renderOrderItem = ({ item }) => {
     const sb = getStatusBadge(item.status);
+    const StatusIcon = sb.icon;
     const isUrgent = item.prioritet === 'HITNO';
-    const isWorking = item.status === 'U_RADU';
-    const isOnTheWay = item.status === 'NA_PUTU';
     const isDone = item.status === 'ZAVRSENO';
+    const isBusy = actionLoading === item.id;
 
     return (
-      <View style={[styles.card, isWorking && styles.cardActive, isDone && styles.cardDone]}>
-        {/* Card Header: RN number, Priority, Status */}
+      <View style={styles.card}>
+        {/* Card Header: RN Number, Priority, Status */}
         <View style={styles.cardHeader}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
             <Text style={styles.orderNumber}>{item.broj_naloga}</Text>
@@ -122,12 +188,14 @@ export default function WorkerOrdersScreen({ onSelectOrder, onOpenDispatcher }) 
               </View>
             )}
           </View>
+
           <View style={[styles.statusBadge, { backgroundColor: sb.bg, borderColor: sb.border }]}>
-            <Text style={[styles.statusBadgeText, { color: sb.text }]}>{sb.label}</Text>
+            <StatusIcon size={12} color={sb.color} style={{ marginRight: 4 }} />
+            <Text style={[styles.statusBadgeText, { color: sb.color }]}>{sb.label}</Text>
           </View>
         </View>
 
-        {/* Client Name & Phone */}
+        {/* Client & Phone */}
         <View style={styles.clientSection}>
           <Text style={styles.clientName}>{item.klijent_ime}</Text>
           <TouchableOpacity
@@ -140,7 +208,7 @@ export default function WorkerOrdersScreen({ onSelectOrder, onOpenDispatcher }) 
           </TouchableOpacity>
         </View>
 
-        {/* Address & Navigation Link */}
+        {/* Address & Navigation */}
         <TouchableOpacity
           style={styles.addressSection}
           onPress={() => handleOpenNavigation(item.gpsX, item.gpsY, item.adresa)}
@@ -152,14 +220,14 @@ export default function WorkerOrdersScreen({ onSelectOrder, onOpenDispatcher }) 
               {item.adresa}
               {item.sprat_stan ? ` (${item.sprat_stan})` : ''}
             </Text>
-            <Text style={styles.navHint}>Kliknite za navigaciju ↗</Text>
+            <Text style={styles.navHint}>Kliknite za GPS navigaciju ↗</Text>
           </View>
         </TouchableOpacity>
 
-        {/* Appliance Info Box */}
+        {/* Appliance info */}
         {item.uredjaj_kategorija ? (
           <View style={styles.applianceBox}>
-            <Wrench size={14} color="#0369A1" style={{ marginRight: 6 }} />
+            <Wrench size={13} color="#0369A1" style={{ marginRight: 6 }} />
             <Text style={styles.applianceText}>
               <Text style={{ fontWeight: '700' }}>{item.uredjaj_kategorija}:</Text>{' '}
               {item.uredjaj_proizvodjac || ''} {item.uredjaj_model || ''}
@@ -168,49 +236,90 @@ export default function WorkerOrdersScreen({ onSelectOrder, onOpenDispatcher }) 
           </View>
         ) : null}
 
-        {/* Problem Description */}
+        {/* Fault description */}
         {item.opis_kvara ? (
           <View style={styles.faultBox}>
-            <Text style={styles.faultLabel}>Opis kvara / Zahtev:</Text>
+            <Text style={styles.faultLabel}>Prijavljeni kvar od klijenta:</Text>
             <Text style={styles.faultText}>{item.opis_kvara}</Text>
           </View>
         ) : null}
 
-        {/* Action Buttons Toolbar */}
+        {/* Standardized Action Toolbar */}
         <View style={styles.cardActions}>
-          {!isDone && (
-            <>
-              {item.status === 'DODELJENO' && (
-                <TouchableOpacity
-                  style={styles.onWayBtn}
-                  onPress={() => handleUpdateStatus(item.id, 'NA_PUTU')}
-                  activeOpacity={0.8}
-                >
-                  <Truck size={15} color="#FFFFFF" style={{ marginRight: 6 }} />
-                  <Text style={styles.btnTextWhite}>Krenuo sam ka adresi</Text>
-                </TouchableOpacity>
+          {/* Primary Action Button according to Lifecycle */}
+          {item.status === 'DODELJENO' && (
+            <TouchableOpacity
+              style={[styles.actionBtn, styles.acceptBtn]}
+              onPress={() => handleUpdateStatus(item.id, 'PRIHVACENO')}
+              disabled={isBusy}
+              activeOpacity={0.8}
+            >
+              {isBusy ? (
+                <ActivityIndicator size="small" color="#FFFFFF" />
+              ) : (
+                <>
+                  <CheckCheck size={15} color="#FFFFFF" style={{ marginRight: 6 }} />
+                  <Text style={styles.btnTextWhite}>Prihvati nalog</Text>
+                </>
               )}
-
-              {isOnTheWay && (
-                <TouchableOpacity
-                  style={styles.startWorkBtn}
-                  onPress={() => handleUpdateStatus(item.id, 'U_RADU')}
-                  activeOpacity={0.8}
-                >
-                  <Wrench size={15} color="#FFFFFF" style={{ marginRight: 6 }} />
-                  <Text style={styles.btnTextWhite}>Stigao sam / Započni rad</Text>
-                </TouchableOpacity>
-              )}
-            </>
+            </TouchableOpacity>
           )}
 
+          {item.status === 'PRIHVACENO' && (
+            <TouchableOpacity
+              style={[styles.actionBtn, styles.onWayBtn]}
+              onPress={() => handleUpdateStatus(item.id, 'NA_PUTU')}
+              disabled={isBusy}
+              activeOpacity={0.8}
+            >
+              {isBusy ? (
+                <ActivityIndicator size="small" color="#FFFFFF" />
+              ) : (
+                <>
+                  <Truck size={15} color="#FFFFFF" style={{ marginRight: 6 }} />
+                  <Text style={styles.btnTextWhite}>Kreni ka adresi</Text>
+                </>
+              )}
+            </TouchableOpacity>
+          )}
+
+          {item.status === 'NA_PUTU' && (
+            <TouchableOpacity
+              style={[styles.actionBtn, styles.startWorkBtn]}
+              onPress={() => handleUpdateStatus(item.id, 'U_RADU')}
+              disabled={isBusy}
+              activeOpacity={0.8}
+            >
+              {isBusy ? (
+                <ActivityIndicator size="small" color="#FFFFFF" />
+              ) : (
+                <>
+                  <Play size={15} color="#FFFFFF" style={{ marginRight: 6 }} />
+                  <Text style={styles.btnTextWhite}>Stigao sam / Započni rad</Text>
+                </>
+              )}
+            </TouchableOpacity>
+          )}
+
+          {item.status === 'U_RADU' && (
+            <TouchableOpacity
+              style={[styles.actionBtn, styles.workingBtn]}
+              onPress={() => onSelectOrder && onSelectOrder(item.id)}
+              activeOpacity={0.8}
+            >
+              <Wrench size={15} color="#FFFFFF" style={{ marginRight: 6 }} />
+              <Text style={styles.btnTextWhite}>Otvori / Unesi delove</Text>
+            </TouchableOpacity>
+          )}
+
+          {/* Secondary Details Button */}
           <TouchableOpacity
             style={[styles.detailBtn, isDone && { flex: 1 }]}
             onPress={() => onSelectOrder && onSelectOrder(item.id)}
             activeOpacity={0.8}
           >
             <Text style={styles.detailBtnText}>
-              {isDone ? 'Pregled završenog naloga' : (isWorking ? 'Otvori nalog i unesi delove' : 'Detalji naloga')}
+              {isDone ? 'Pregled završenog naloga' : 'Detalji naloga'}
             </Text>
             <ChevronRight size={16} color={colors.primary} />
           </TouchableOpacity>
@@ -221,49 +330,48 @@ export default function WorkerOrdersScreen({ onSelectOrder, onOpenDispatcher }) 
 
   return (
     <View style={styles.container}>
-      {/* Top Header */}
+      {/* Top Bar */}
       <View style={styles.header}>
-        <View>
-          <Text style={styles.headerSub}>{user?.firma_naziv || 'MajstorNalog'}</Text>
-          <Text style={styles.headerTitle}>
-            Majstor: <Text style={{ color: colors.primary }}>{user?.ime} {user?.prezime}</Text>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.headerTitle}>Moji radni nalozi</Text>
+          <Text style={styles.headerSub}>
+            Majstor: <Text style={{ fontWeight: '800', color: '#0F172A' }}>{user?.ime} {user?.prezime}</Text> • {user?.firma_naziv || 'Servis'}
           </Text>
         </View>
 
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-          {(isOwner || isDispatcher) && onOpenDispatcher && (
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          {(isOwner || isDispatcher || isSuperAdmin) && (
             <TouchableOpacity
-              style={styles.dispatcherPill}
+              style={styles.dispatcherBtn}
               onPress={onOpenDispatcher}
               activeOpacity={0.8}
             >
-              <UserCheck size={14} color="#FFFFFF" style={{ marginRight: 4 }} />
-              <Text style={styles.dispatcherPillText}>Dispečer</Text>
+              <Text style={styles.dispatcherBtnText}>
+                {isSuperAdmin ? '👑 SuperAdmin' : '📊 Dispečer'}
+              </Text>
             </TouchableOpacity>
           )}
 
-          <TouchableOpacity style={styles.iconBtn} onPress={fetchOrders} activeOpacity={0.8}>
-            <RefreshCw size={18} color="#64748B" />
+          <TouchableOpacity style={styles.iconBtn} onPress={fetchOrders} activeOpacity={0.7}>
+            <RefreshCw size={17} color="#475569" />
           </TouchableOpacity>
 
-          <TouchableOpacity style={styles.iconBtn} onPress={logout} activeOpacity={0.8}>
-            <LogOut size={18} color="#DC2626" />
+          <TouchableOpacity style={[styles.iconBtn, { backgroundColor: '#FEE2E2' }]} onPress={logout} activeOpacity={0.7}>
+            <LogOut size={17} color="#DC2626" />
           </TouchableOpacity>
         </View>
       </View>
 
-      {/* Stats Summary Bar */}
+      {/* Stats Counter Bar */}
       <View style={styles.statsBar}>
         <View style={styles.statPill}>
-          <Text style={styles.statNum}>{totalAssigned}</Text>
-          <Text style={styles.statText}>Za rad</Text>
+          <Text style={styles.statNum}>{totalOrders}</Text>
+          <Text style={styles.statText}>Ukupno danas</Text>
         </View>
-
         <View style={[styles.statPill, { borderLeftWidth: 1, borderRightWidth: 1, borderColor: '#E2E8F0' }]}>
-          <Text style={[styles.statNum, { color: colors.warning }]}>{inProgress}</Text>
-          <Text style={styles.statText}>U toku</Text>
+          <Text style={[styles.statNum, { color: '#0284C7' }]}>{inProgress}</Text>
+          <Text style={styles.statText}>U toku / Na putu</Text>
         </View>
-
         <View style={styles.statPill}>
           <Text style={[styles.statNum, { color: colors.success }]}>{completedToday}</Text>
           <Text style={styles.statText}>Završeno</Text>
@@ -272,9 +380,9 @@ export default function WorkerOrdersScreen({ onSelectOrder, onOpenDispatcher }) 
 
       {/* Orders List */}
       {loading ? (
-        <View style={styles.loaderWrap}>
+        <View style={styles.center}>
           <ActivityIndicator size="large" color={colors.primary} />
-          <Text style={styles.loaderText}>Učitavanje današnjih naloga...</Text>
+          <Text style={styles.loadingText}>Učitavanje radnih naloga...</Text>
         </View>
       ) : (
         <FlatList
@@ -283,13 +391,13 @@ export default function WorkerOrdersScreen({ onSelectOrder, onOpenDispatcher }) 
           renderItem={renderOrderItem}
           contentContainerStyle={styles.listContent}
           refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={fetchOrders} colors={[colors.primary]} />
+            <RefreshControl refreshing={refreshing} onRefresh={fetchOrders} />
           }
           ListEmptyComponent={
             <View style={styles.emptyWrap}>
-              <CheckCircle size={48} color={colors.success} style={{ marginBottom: 12 }} />
-              <Text style={styles.emptyTitle}>Nema zaduženih naloga</Text>
-              <Text style={styles.emptySubtitle}>Trenutno nemate aktivnih radnih naloga za današnji dan.</Text>
+              <CheckCircle size={48} color="#94A3B8" />
+              <Text style={styles.emptyTitle}>Nemate aktivnih naloga za danas</Text>
+              <Text style={styles.emptySub}>Čim dispečer dodeli novi nalog, pojaviće se ovde automatski.</Text>
             </View>
           }
         />
@@ -301,42 +409,38 @@ export default function WorkerOrdersScreen({ onSelectOrder, onOpenDispatcher }) 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F8FAFC'
+    backgroundColor: '#F1F5F9'
   },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: 16,
-    paddingTop: Platform.OS === 'ios' ? 44 : 14,
-    paddingBottom: 14,
+    paddingVertical: 12,
     backgroundColor: '#FFFFFF',
     borderBottomWidth: 1,
     borderBottomColor: '#E2E8F0'
   },
-  headerSub: {
-    fontSize: 11.5,
-    fontWeight: '700',
-    color: '#64748B',
-    textTransform: 'uppercase',
-    letterSpacing: 0.5
-  },
   headerTitle: {
-    fontSize: 16,
-    fontWeight: '800',
-    color: '#0F172A',
+    fontSize: 17,
+    fontWeight: '900',
+    color: '#0F172A'
+  },
+  headerSub: {
+    fontSize: 12,
+    color: '#64748B',
     marginTop: 2
   },
-  dispatcherPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: colors.primary,
+  dispatcherBtn: {
+    backgroundColor: '#EFF6FF',
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 8
   },
-  dispatcherPillText: {
-    color: '#FFFFFF',
+  dispatcherBtnText: {
+    color: colors.primary,
     fontSize: 12,
     fontWeight: '700'
   },
@@ -375,53 +479,49 @@ const styles = StyleSheet.create({
     padding: 14,
     gap: 12
   },
+
+  // Standardized Card Design
   card: {
     backgroundColor: '#FFFFFF',
     borderRadius: 14,
     padding: 16,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: '#CBD5E1',
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 6,
-    elevation: 2
-  },
-  cardActive: {
-    borderColor: colors.warning,
-    borderWidth: 1.8
-  },
-  cardDone: {
-    opacity: 0.85,
-    backgroundColor: '#FAFCFF'
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 4,
+    elevation: 2,
+    gap: 8
   },
   cardHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 10
+    alignItems: 'center'
   },
   orderNumber: {
-    fontSize: 13,
+    fontSize: 15,
     fontWeight: '900',
     color: '#0F172A'
   },
   urgentBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(220, 38, 38, 0.12)',
+    backgroundColor: '#FEE2E2',
     paddingHorizontal: 6,
     paddingVertical: 2,
-    borderRadius: 6
+    borderRadius: 4
   },
   urgentText: {
-    fontSize: 9.5,
-    fontWeight: '800',
+    fontSize: 10,
+    fontWeight: '900',
     color: '#DC2626'
   },
   statusBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
     paddingHorizontal: 8,
-    paddingVertical: 3,
+    paddingVertical: 4,
     borderRadius: 6,
     borderWidth: 1
   },
@@ -429,14 +529,14 @@ const styles = StyleSheet.create({
     fontSize: 10.5,
     fontWeight: '800'
   },
+
   clientSection: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 8
+    alignItems: 'center'
   },
   clientName: {
-    fontSize: 16,
+    fontSize: 15.5,
     fontWeight: '800',
     color: '#0F172A',
     flex: 1
@@ -446,7 +546,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: colors.success,
     paddingHorizontal: 10,
-    paddingVertical: 6,
+    paddingVertical: 5,
     borderRadius: 8
   },
   callPillText: {
@@ -454,35 +554,32 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700'
   },
+
   addressSection: {
     flexDirection: 'row',
     alignItems: 'flex-start',
     backgroundColor: '#F8FAFC',
-    padding: 10,
-    borderRadius: 8,
-    marginBottom: 8,
-    borderWidth: 1,
-    borderColor: '#E2E8F0'
+    padding: 8,
+    borderRadius: 8
   },
   addressText: {
     fontSize: 13,
-    fontWeight: '600',
-    color: '#334155'
+    color: '#334155',
+    fontWeight: '600'
   },
   navHint: {
-    fontSize: 10.5,
+    fontSize: 11,
     color: colors.primary,
     fontWeight: '700',
-    marginTop: 3
+    marginTop: 2
   },
+
   applianceBox: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#F0F9FF',
-    paddingHorizontal: 10,
-    paddingVertical: 6,
+    padding: 7,
     borderRadius: 6,
-    marginBottom: 8,
     borderWidth: 1,
     borderColor: '#BAE6FD'
   },
@@ -490,48 +587,54 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#0369A1'
   },
+
   faultBox: {
     backgroundColor: '#FFFBEB',
-    padding: 10,
-    borderRadius: 8,
-    marginBottom: 12,
+    padding: 8,
+    borderRadius: 6,
     borderWidth: 1,
     borderColor: '#FEF3C7'
   },
   faultLabel: {
-    fontSize: 11,
+    fontSize: 10.5,
     fontWeight: '700',
-    color: '#B45309',
-    marginBottom: 2
+    color: '#B45309'
   },
   faultText: {
-    fontSize: 12.5,
-    color: '#78350F'
+    fontSize: 12,
+    color: '#78350F',
+    marginTop: 1
   },
+
+  // Action Buttons
   cardActions: {
     flexDirection: 'row',
+    alignItems: 'center',
     gap: 8,
-    paddingTop: 10,
+    marginTop: 4,
+    paddingTop: 8,
     borderTopWidth: 1,
     borderTopColor: '#F1F5F9'
   },
-  onWayBtn: {
-    flex: 1,
+  actionBtn: {
+    flex: 1.2,
     flexDirection: 'row',
-    alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: colors.primary,
-    paddingVertical: 10,
+    alignItems: 'center',
+    paddingVertical: 9,
     borderRadius: 8
   },
+  acceptBtn: {
+    backgroundColor: '#0284C7'
+  },
+  onWayBtn: {
+    backgroundColor: '#4F46E5'
+  },
   startWorkBtn: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: colors.warning,
-    paddingVertical: 10,
-    borderRadius: 8
+    backgroundColor: '#D97706'
+  },
+  workingBtn: {
+    backgroundColor: '#059669'
   },
   btnTextWhite: {
     color: '#FFFFFF',
@@ -539,46 +642,48 @@ const styles = StyleSheet.create({
     fontWeight: '800'
   },
   detailBtn: {
+    flex: 0.9,
     flexDirection: 'row',
-    alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(2, 132, 199, 0.1)',
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    borderRadius: 8
+    alignItems: 'center',
+    backgroundColor: '#F1F5F9',
+    paddingVertical: 9,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#E2E8F0'
   },
   detailBtnText: {
-    color: colors.primary,
-    fontSize: 12.5,
+    fontSize: 12,
     fontWeight: '700',
+    color: '#334155',
     marginRight: 4
   },
-  loaderWrap: {
+
+  center: {
     flex: 1,
     justifyContent: 'center',
-    alignItems: 'center',
-    padding: 40
+    alignItems: 'center'
   },
-  loaderText: {
-    marginTop: 12,
+  loadingText: {
+    marginTop: 10,
     fontSize: 13,
-    color: '#64748B',
-    fontWeight: '600'
+    color: '#64748B'
   },
   emptyWrap: {
     alignItems: 'center',
-    paddingVertical: 60,
-    paddingHorizontal: 20
+    justifyContent: 'center',
+    paddingVertical: 50,
+    gap: 10
   },
   emptyTitle: {
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: '800',
-    color: '#0F172A',
-    marginBottom: 6
+    color: '#334155'
   },
-  emptySubtitle: {
-    fontSize: 13,
+  emptySub: {
+    fontSize: 12.5,
     color: '#64748B',
-    textAlign: 'center'
+    textAlign: 'center',
+    maxWidth: 280
   }
 });

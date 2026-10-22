@@ -134,6 +134,13 @@ export default function LoginScreen() {
                 >
                   <Text style={[styles.demoBtnText, { color: colors.primary }]}>📊 Dispečer / Gazda</Text>
                 </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.demoBtn, { backgroundColor: '#FAF5FF', borderColor: '#9333EA' }]}
+                  onPress={() => fillDemo('admin@majstornalog.rs', 'SuperAdmin')}
+                >
+                  <Text style={[styles.demoBtnText, { color: '#7E22CE' }]}>👑 SuperAdmin (Licence i Firme)</Text>
+                </TouchableOpacity>
               </View>
             </View>
 

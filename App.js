@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { StyleSheet, View, ActivityIndicator } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
@@ -8,12 +8,26 @@ import LoginScreen from './src/screens/LoginScreen';
 import WorkerOrdersScreen from './src/screens/WorkerOrdersScreen';
 import OrderDetailScreen from './src/screens/OrderDetailScreen';
 import DispatcherScreen from './src/screens/DispatcherScreen';
+import SuperAdminScreen from './src/screens/SuperAdminScreen';
 import { colors } from './src/theme/colors';
 
 function MainNavigator() {
-  const { user, loading, isDispatcher, isOwner } = useAuth();
-  const [currentView, setCurrentView] = useState('orders'); // 'orders' | 'detail' | 'dispatcher'
+  const { user, loading, isDispatcher, isOwner, isSuperAdmin } = useAuth();
+  const [currentView, setCurrentView] = useState('orders'); // 'orders' | 'detail' | 'dispatcher' | 'superadmin'
   const [selectedOrderId, setSelectedOrderId] = useState(null);
+
+  // Automatski podesi početni ekran prema ulozi
+  useEffect(() => {
+    if (user) {
+      if (isSuperAdmin) {
+        setCurrentView('superadmin');
+      } else if (isDispatcher || isOwner) {
+        setCurrentView('dispatcher');
+      } else {
+        setCurrentView('orders');
+      }
+    }
+  }, [user?.id, isSuperAdmin, isDispatcher, isOwner]);
 
   if (loading) {
     return (
@@ -27,6 +41,15 @@ function MainNavigator() {
     return <LoginScreen />;
   }
 
+  // Ako je izabran SuperAdmin ekran
+  if (currentView === 'superadmin') {
+    return (
+      <SuperAdminScreen
+        onOpenDispatcher={() => setCurrentView('dispatcher')}
+      />
+    );
+  }
+
   // Ako je izabran detalj naloga
   if (currentView === 'detail' && selectedOrderId) {
     return (
@@ -34,7 +57,7 @@ function MainNavigator() {
         orderId={selectedOrderId}
         onBack={() => {
           setSelectedOrderId(null);
-          setCurrentView('orders');
+          setCurrentView(isDispatcher || isOwner ? 'dispatcher' : 'orders');
         }}
       />
     );
@@ -44,7 +67,7 @@ function MainNavigator() {
   if (currentView === 'dispatcher') {
     return (
       <DispatcherScreen
-        onBackToWorker={() => setCurrentView('orders')}
+        onBackToWorker={() => setCurrentView(isSuperAdmin ? 'superadmin' : 'orders')}
       />
     );
   }
@@ -56,7 +79,7 @@ function MainNavigator() {
         setSelectedOrderId(orderId);
         setCurrentView('detail');
       }}
-      onOpenDispatcher={() => setCurrentView('dispatcher')}
+      onOpenDispatcher={() => setCurrentView(isSuperAdmin ? 'superadmin' : 'dispatcher')}
     />
   );
 }

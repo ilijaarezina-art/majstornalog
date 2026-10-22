@@ -93,14 +93,15 @@ export const api = {
     });
   },
 
-  updateOrderStatus: async (orderId, status, workerId = null, comment = '') => {
+  updateOrderStatus: async (orderId, status, workerId = null, comment = '', reason = '') => {
     return request('update_order_status', {
       method: 'POST',
       body: {
         order_id: orderId,
         status,
         majstor_id: workerId,
-        komentar: comment
+        komentar: comment,
+        razlog_odlaganja: reason
       }
     });
   },
@@ -137,5 +138,28 @@ export const api = {
   getDispatcherDashboard: async (firmId, date = '') => {
     const qStr = `firma_id=${encodeURIComponent(firmId)}${date ? `&datum=${encodeURIComponent(date)}` : ''}`;
     return request('get_dispatcher_dashboard', { query: qStr });
+  },
+
+  // SUPERADMIN SAAS ENDPOINTI
+  getSuperadminDashboard: async () => {
+    return request('get_superadmin_dashboard');
+  },
+
+  saveFirm: async (firmData) => {
+    return request('save_firm', {
+      method: 'POST',
+      body: firmData
+    });
+  },
+
+  extendFirmLicense: async (firmId, months = 1) => {
+    return request('extend_firm_license', {
+      method: 'POST',
+      body: { firm_id: firmId, months }
+    });
+  },
+
+  getPackages: async () => {
+    return request('get_packages');
   }
 };
