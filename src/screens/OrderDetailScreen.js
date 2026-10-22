@@ -356,9 +356,37 @@ export default function OrderDetailScreen({ orderId, onBack }) {
   );
 
   // Desna kolona / Radni formular
+  const delayHistory = (order?.istorija || []).filter(h => h.novi_status === 'ODLOZENO');
+  const hasDelays = delayHistory.length > 0 || !!order?.razlog_odlaganja;
+
   const renderOrderDetailsForm = () => (
     <View style={styles.formContainer}>
       {renderStatusStepper()}
+
+      {/* Kartica sa trajnom istorijom svih odlaganja i napomena sa terena */}
+      {hasDelays && (
+        <View style={styles.delayHistoryCard}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
+            <AlertTriangle size={15} color="#DC2626" style={{ marginRight: 6 }} />
+            <Text style={styles.delayHistoryTitle}>Istorija odlaganja i zapažanja sa terena ({delayHistory.length || 1}):</Text>
+          </View>
+
+          {delayHistory.length > 0 ? (
+            delayHistory.map((h, i) => (
+              <View key={h.id || i} style={styles.delayHistoryItem}>
+                <Text style={styles.delayHistoryTime}>
+                  🕒 {h.kreiran_at} • {h.promenio_ime ? `${h.promenio_ime} ${h.promenio_prezime || ''}` : 'Majstor'}:
+                </Text>
+                <Text style={styles.delayHistoryText}>{h.komentar || 'Nije unet detaljan razlog'}</Text>
+              </View>
+            ))
+          ) : (
+            <View style={styles.delayHistoryItem}>
+              <Text style={styles.delayHistoryText}>{order.razlog_odlaganja}</Text>
+            </View>
+          )}
+        </View>
+      )}
 
       {/* Client & Device Card */}
       <View style={styles.card}>
@@ -1487,5 +1515,35 @@ const styles = StyleSheet.create({
     fontSize: 12.5,
     fontWeight: '800',
     color: '#FFFFFF'
+  },
+  delayHistoryCard: {
+    backgroundColor: '#FFF5F5',
+    borderRadius: 12,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#FECACA'
+  },
+  delayHistoryTitle: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#991B1B'
+  },
+  delayHistoryItem: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 8,
+    padding: 8,
+    marginTop: 6,
+    borderWidth: 1,
+    borderColor: '#FEE2E2'
+  },
+  delayHistoryTime: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#DC2626'
+  },
+  delayHistoryText: {
+    fontSize: 12,
+    color: '#450A0A',
+    marginTop: 2
   }
 });
