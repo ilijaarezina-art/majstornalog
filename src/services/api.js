@@ -1,12 +1,21 @@
 import { Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-// Default backend endpoint (prilagođava se za Web, Android emulator i produkciju)
-let API_BASE_URL = Platform.select({
-  web: 'http://localhost/majstornalog/backend/api.php',
-  android: 'http://10.0.2.2/majstornalog/backend/api.php',
-  default: 'http://localhost/majstornalog/backend/api.php'
-});
+// Određivanje podrazumevanog endpoint-a
+const getDefaultApiUrl = () => {
+  if (Platform.OS === 'web' && typeof window !== 'undefined' && window.location) {
+    const origin = window.location.origin;
+    if (origin.includes('localhost') || origin.includes('127.0.0.1')) {
+      return 'http://localhost/majstornalog/api.php';
+    }
+    // Ako se pokreće na bookmymusic.rs ili live hostingu
+    return `${origin}/majstornalog/api.php`;
+  }
+  // Za mobilni Android / iOS produkciju
+  return 'https://bookmymusic.rs/majstornalog/api.php';
+};
+
+let API_BASE_URL = getDefaultApiUrl();
 
 export const setCustomApiUrl = async (url) => {
   if (url) {
