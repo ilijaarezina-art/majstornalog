@@ -729,6 +729,80 @@ elseif ($action === 'get_packages') {
     sendResponse('success', $stmt->fetchAll());
 }
 
+// ==========================================================
+// 13. SUPERADMIN: BRISANJE SERVISA / FIRME (DELETE_FIRM)
+// ==========================================================
+elseif ($action === 'delete_firm') {
+    $firm_id = isset($inputData['firm_id']) ? intval($inputData['firm_id']) : 0;
+    if ($firm_id <= 0) {
+        sendResponse('error', 'ID servisa je obavezan.', 400);
+    }
+
+    // Proveri postojanje firme
+    $chk = $conn->prepare("SELECT id, naziv FROM firme WHERE id = ?");
+    $chk->execute([$firm_id]);
+    $firm = $chk->fetch();
+    if (!$firm) {
+        sendResponse('error', 'Servis nije pronađen.', 404);
+    }
+
+    // Zaštita: Proveri da li se superadmin nalog nalazi u ovom servisu
+    $chkAdmin = $conn->prepare("SELECT COUNT(*) FROM korisnici WHERE firma_id = ? AND rola = 'superadmin'");
+    $chkAdmin->execute([$firm_id]);
+    if ($chkAdmin->fetchColumn() > 0) {
+        sendResponse('error', 'Nije dozvoljeno brisanje primarnog servisa u kome se nalazi SuperAdmin nalog.', 400);
+    }
+
+    try {
+        $conn->beginTransaction();
+
+        // 1. Obriši stavke naloga i istoriju statusa za sve naloge ove firme
+        $conn->prepare("
+            DELETE ns FROM nalozi_stavke ns 
+            JOIN radni_nalozi rn ON ns.nalog_id = rn.id 
+            WHERE rn.firma_id = ?
+        ")->execute([$firm_id]);
+
+        $conn->prepare("
+            DELETE si FROM status_istorija si 
+            JOIN radni_nalozi rn ON si.nalog_id = rn.id 
+            WHERE rn.firma_id = ?
+        ")->execute([$firm_id]);
+
+        // 2. Obriši radne naloge
+        $conn->prepare("DELETE FROM radni_nalozi WHERE firma_id = ?")->execute([$firm_id]);
+
+        // 3. Obriši uređaje
+        $conn->prepare("DELETE FROM uredjaji WHERE firma_id = ?")->execute([$firm_id]);
+
+        // 4. Obriši klijente
+        $conn->prepare("DELETE FROM klijenti WHERE firma_id = ?")->execute([$firm_id]);
+
+        // 5. Obriši katalog delova
+        $conn->prepare("DELETE FROM katalog_delova_i_usluga WHERE firma_id = ?")->execute([$firm_id]);
+
+        // 6. Obriši lokacije majstora
+        $conn->prepare("DELETE FROM majstori_lokacija WHERE firma_id = ?")->execute([$firm_id]);
+
+        // 7. Obriši korisnike ovog servisa
+        $conn->prepare("DELETE FROM korisnici WHERE firma_id = ?")->execute([$firm_id]);
+
+        // 8. Obriši istoriju licenci
+        $conn->prepare("DELETE FROM licence_istorija WHERE firma_id = ?")->execute([$firm_id]);
+
+        // 9. Obriši sam servis
+        $conn->prepare("DELETE FROM firme WHERE id = ?")->execute([$firm_id]);
+
+        $conn->commit();
+        sendResponse('success', ["poruka" => "Servis '{$firm['naziv']}' i svi pripadajući podaci su uspešno obrisani."]);
+    } catch (Exception $e) {
+        if ($conn->inTransaction()) {
+            $conn->rollBack();
+        }
+        sendResponse('error', 'Greška pri brisanju servisa: ' . $e->getMessage(), 500);
+    }
+}
+
 else {
     sendResponse('error', 'Nepoznata akcija ili akcija nije prosleđena.', 404);
 }

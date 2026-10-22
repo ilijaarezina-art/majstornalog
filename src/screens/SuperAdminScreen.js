@@ -23,6 +23,7 @@ import {
   AlertTriangle,
   Plus,
   Edit3,
+  Trash2,
   RefreshCw,
   LogOut,
   Sliders,
@@ -244,6 +245,42 @@ export default function SuperAdminScreen({ onOpenDispatcher }) {
     datum_isteka: ''
   });
   const [saving, setSaving] = useState(false);
+  const [deletingId, setDeletingId] = useState(null);
+
+  const executeDelete = async (firmId) => {
+    setDeletingId(firmId);
+    try {
+      const res = await api.deleteFirm(firmId);
+      Alert.alert('Uspešno', res?.poruka || 'Servis je uspešno obrisan.');
+      if (showFirmModal && editingFirm?.id === firmId) {
+        setShowFirmModal(false);
+      }
+      loadData();
+    } catch (err) {
+      Alert.alert('Greška', err.message || 'Neuspešno brisanje servisa.');
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
+  const handleDeleteFirm = (firm) => {
+    const confirmMessage = `Da li ste sigurni da želite trajno da obrišete servis "${firm.naziv}"?\n\nPažnja: Biće trajno obrisani svi radni nalozi, klijenti, uređaji i korisnički nalozi ovog servisa!`;
+
+    if (Platform.OS === 'web') {
+      if (window.confirm(confirmMessage)) {
+        executeDelete(firm.id);
+      }
+    } else {
+      Alert.alert(
+        'Potvrda trajnog brisanja',
+        confirmMessage,
+        [
+          { text: 'Otkaži', style: 'cancel' },
+          { text: 'Obriši servis', style: 'destructive', onPress: () => executeDelete(firm.id) }
+        ]
+      );
+    }
+  };
 
   const loadData = useCallback(async () => {
     try {
@@ -546,22 +583,40 @@ export default function SuperAdminScreen({ onOpenDispatcher }) {
                     </View>
                   </View>
 
-                  {/* Donji red: Isključivo dugme za Izmenu servisa */}
+                  {/* Donji red: Upravljanje servisom (Izmeni i Obriši) */}
                   <View style={styles.firmCardBottom}>
                     <View style={{ flex: 1 }}>
                       <Text style={styles.firmBottomHint}>
-                        Za promenu licence, definisanje paketa ili podataka kliknite na Izmeni:
+                        Upravljanje servisom i licencom:
                       </Text>
                     </View>
 
-                    <TouchableOpacity
-                      style={styles.editBtn}
-                      onPress={() => handleEditFirm(f)}
-                      activeOpacity={0.8}
-                    >
-                      <Edit3 size={14} color="#FFFFFF" style={{ marginRight: 6 }} />
-                      <Text style={styles.editBtnText}>Izmeni servis</Text>
-                    </TouchableOpacity>
+                    <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
+                      <TouchableOpacity
+                        style={styles.deleteFirmBtn}
+                        onPress={() => handleDeleteFirm(f)}
+                        disabled={deletingId === f.id}
+                        activeOpacity={0.8}
+                      >
+                        {deletingId === f.id ? (
+                          <ActivityIndicator size="small" color="#DC2626" />
+                        ) : (
+                          <>
+                            <Trash2 size={13} color="#DC2626" style={{ marginRight: 4 }} />
+                            <Text style={styles.deleteFirmBtnText}>Obriši</Text>
+                          </>
+                        )}
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        style={styles.editBtn}
+                        onPress={() => handleEditFirm(f)}
+                        activeOpacity={0.8}
+                      >
+                        <Edit3 size={14} color="#FFFFFF" style={{ marginRight: 6 }} />
+                        <Text style={styles.editBtnText}>Izmeni servis</Text>
+                      </TouchableOpacity>
+                    </View>
                   </View>
                 </View>
               );
@@ -745,24 +800,44 @@ export default function SuperAdminScreen({ onOpenDispatcher }) {
             </ScrollView>
 
             <View style={styles.modalFooter}>
-              <TouchableOpacity
-                style={styles.cancelModalBtn}
-                onPress={() => setShowFirmModal(false)}
-              >
-                <Text style={styles.cancelModalBtnText}>Otkaži</Text>
-              </TouchableOpacity>
+              {editingFirm && editingFirm.id > 0 && (
+                <TouchableOpacity
+                  style={styles.modalDeleteBtn}
+                  onPress={() => handleDeleteFirm(editingFirm)}
+                  disabled={deletingId === editingFirm.id}
+                  activeOpacity={0.8}
+                >
+                  {deletingId === editingFirm.id ? (
+                    <ActivityIndicator size="small" color="#DC2626" />
+                  ) : (
+                    <>
+                      <Trash2 size={14} color="#DC2626" style={{ marginRight: 5 }} />
+                      <Text style={styles.modalDeleteBtnText}>Obriši servis</Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+              )}
 
-              <TouchableOpacity
-                style={[styles.saveModalBtn, saving && { opacity: 0.7 }]}
-                onPress={handleSaveFirm}
-                disabled={saving}
-              >
-                {saving ? (
-                  <ActivityIndicator color="#FFFFFF" />
-                ) : (
-                  <Text style={styles.saveModalBtnText}>Sačuvaj izmene</Text>
-                )}
-              </TouchableOpacity>
+              <View style={{ flexDirection: 'row', gap: 10, marginLeft: 'auto' }}>
+                <TouchableOpacity
+                  style={styles.cancelModalBtn}
+                  onPress={() => setShowFirmModal(false)}
+                >
+                  <Text style={styles.cancelModalBtnText}>Otkaži</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.saveModalBtn, saving && { opacity: 0.7 }]}
+                  onPress={handleSaveFirm}
+                  disabled={saving}
+                >
+                  {saving ? (
+                    <ActivityIndicator color="#FFFFFF" />
+                  ) : (
+                    <Text style={styles.saveModalBtnText}>Sačuvaj izmene</Text>
+                  )}
+                </TouchableOpacity>
+              </View>
             </View>
           </View>
         </View>
@@ -1096,6 +1171,21 @@ const styles = StyleSheet.create({
     fontSize: 11.5,
     color: '#64748B'
   },
+  deleteFirmBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFF5F5',
+    borderWidth: 1,
+    borderColor: '#FECACA',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8
+  },
+  deleteFirmBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#DC2626'
+  },
   editBtn: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1360,12 +1450,27 @@ const styles = StyleSheet.create({
 
   modalFooter: {
     flexDirection: 'row',
-    justifyContent: 'flex-end',
+    alignItems: 'center',
     gap: 10,
     marginTop: 14,
     paddingTop: 10,
     borderTopWidth: 1,
     borderTopColor: '#F1F5F9'
+  },
+  modalDeleteBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFF5F5',
+    borderWidth: 1,
+    borderColor: '#FECACA',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8
+  },
+  modalDeleteBtnText: {
+    fontSize: 12.5,
+    fontWeight: '700',
+    color: '#DC2626'
   },
   cancelModalBtn: {
     paddingHorizontal: 14,

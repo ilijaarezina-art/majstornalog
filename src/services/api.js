@@ -159,6 +159,13 @@ export const api = {
     });
   },
 
+  deleteFirm: async (firmId) => {
+    return request('delete_firm', {
+      method: 'POST',
+      body: { firm_id: firmId }
+    });
+  },
+
   getPackages: async () => {
     return request('get_packages');
   }
