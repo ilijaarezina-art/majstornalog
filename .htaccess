@@ -1,0 +1,15 @@
+# Omogući izvršavanje i čitanje fajlova
+Options -Indexes +FollowSymLinks
+
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteBase /majstornalog/
+
+  # Dozvoli direktan pristup API-ju i postojećim fajlovima
+  RewriteCond %{REQUEST_FILENAME} -f [OR]
+  RewriteCond %{REQUEST_FILENAME} -d
+  RewriteRule ^ - [L]
+
+  # Sve ostalo prosledi na index.html za React SPA
+  RewriteRule ^ index.html [L]
+</IfModule>
