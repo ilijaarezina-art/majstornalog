@@ -168,6 +168,19 @@ export default function OrderDetailScreen({ orderId, onBack }) {
     setShowSignatureModal(false);
   };
 
+  const handleReopenOrder = async () => {
+    setStatusLoading(true);
+    try {
+      await api.updateOrderStatus(orderId, 'U_RADU', user.id, 'Ponovno otvaranje naloga radi izmene/dopune');
+      await fetchOrderDetails();
+      Alert.alert('Nalog ponovo otvoren', 'Radni nalog je vraćen u status "U radu". Sada možete izmeniti stavke, opis ili potpis, a zatim ga ponovo overiti.');
+    } catch (err) {
+      Alert.alert('Greška', err.message || 'Neuspešno ponovno otvaranje naloga.');
+    } finally {
+      setStatusLoading(false);
+    }
+  };
+
   const handleCompleteOrder = async () => {
     if (!signatureData && order.status !== 'ZAVRSENO') {
       Alert.alert('Potpis klijenta', 'Za završetak radnog naloga neophodan je potpis klijenta.');
@@ -187,9 +200,11 @@ export default function OrderDetailScreen({ orderId, onBack }) {
         stavke: items
       };
       await api.completeOrder(payload);
-      Alert.alert('Uspešno', 'Radni nalog je uspešno overen i završen!', [
-        { text: 'U redu', onPress: onBack }
-      ]);
+
+      // Automatsko vraćanje majstora na listu naloga
+      if (onBack) {
+        onBack();
+      }
     } catch (err) {
       Alert.alert('Greška', err.message || 'Neuspešan završetak naloga.');
     } finally {
@@ -351,6 +366,33 @@ export default function OrderDetailScreen({ orderId, onBack }) {
               <Text style={styles.delayBtnText}>Prijavi problem / Odloži nalog</Text>
             </TouchableOpacity>
           )}
+        </View>
+      )}
+
+      {/* Mogućnost ponovnog otvaranja ako je nalog ZAVRŠEN */}
+      {isDone && (
+        <View style={styles.stepperActionBox}>
+          <View style={[styles.workingNoticeBox, { backgroundColor: '#DEF7EC', borderColor: '#BCF0DA' }]}>
+            <CheckCircle2 size={16} color={colors.success} style={{ marginRight: 8 }} />
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontSize: 12.5, fontWeight: '800', color: '#03543F' }}>Radni nalog je overen i završen</Text>
+              <Text style={{ fontSize: 11, color: '#046C4E', marginTop: 1 }}>Ukoliko je potrebno uneti izmene ili dopune, možete ponovo otvoriti nalog:</Text>
+            </View>
+          </View>
+
+          <TouchableOpacity
+            style={[styles.bigStepBtn, { backgroundColor: '#0284C7' }]}
+            onPress={handleReopenOrder}
+            disabled={statusLoading}
+            activeOpacity={0.8}
+          >
+            {statusLoading ? <ActivityIndicator color="#FFFFFF" /> : (
+              <>
+                <RotateCcw size={18} color="#FFFFFF" style={{ marginRight: 8 }} />
+                <Text style={styles.bigStepBtnText}>PONOVO OTVORI NALOG ZA IZMENU</Text>
+              </>
+            )}
+          </TouchableOpacity>
         </View>
       )}
     </View>
@@ -572,8 +614,23 @@ export default function OrderDetailScreen({ orderId, onBack }) {
         </TouchableOpacity>
       ) : (
         <View style={styles.orderCompletedBanner}>
-          <CheckCircle2 size={22} color={colors.success} style={{ marginRight: 8 }} />
-          <Text style={styles.orderCompletedBannerText}>Radni nalog je overen i uspešno arhiviran.</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10 }}>
+            <CheckCircle2 size={20} color={colors.success} style={{ marginRight: 8 }} />
+            <Text style={styles.orderCompletedBannerText}>Radni nalog je overen i uspešno arhiviran.</Text>
+          </View>
+          <TouchableOpacity
+            style={styles.reopenOrderBannerBtn}
+            onPress={handleReopenOrder}
+            disabled={statusLoading}
+            activeOpacity={0.8}
+          >
+            {statusLoading ? <ActivityIndicator color="#FFFFFF" /> : (
+              <>
+                <RotateCcw size={16} color="#FFFFFF" style={{ marginRight: 8 }} />
+                <Text style={styles.reopenOrderBannerBtnText}>PONOVO OTVORI NALOG ZA IZMENU</Text>
+              </>
+            )}
+          </TouchableOpacity>
         </View>
       )}
 
@@ -1388,9 +1445,8 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#BCF0DA',
     borderRadius: 12,
-    paddingVertical: 12,
+    paddingVertical: 14,
     paddingHorizontal: 14,
-    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     marginTop: 4
@@ -1399,6 +1455,22 @@ const styles = StyleSheet.create({
     color: '#03543F',
     fontSize: 13.5,
     fontWeight: '700'
+  },
+  reopenOrderBannerBtn: {
+    backgroundColor: '#0284C7',
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '100%'
+  },
+  reopenOrderBannerBtnText: {
+    color: '#FFFFFF',
+    fontSize: 12.5,
+    fontWeight: '800',
+    letterSpacing: 0.5
   },
   bottomCloseBtn: {
     backgroundColor: '#F1F5F9',
