@@ -38,7 +38,8 @@ import {
   Play,
   AlertTriangle,
   History,
-  Inbox
+  Inbox,
+  RotateCcw
 } from 'lucide-react-native';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../services/api';
