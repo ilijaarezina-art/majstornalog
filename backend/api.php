@@ -11,6 +11,10 @@ header("Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS");
 header("Access-Control-Allow-Headers: Content-Type, Authorization, X-Requested-With");
 header("Content-Type: application/json; charset=UTF-8");
 
+// Spreči ispisivanje PHP warning-a direktno u HTTP body kako ne bi kvarili JSON
+ini_set('display_errors', 0);
+error_reporting(E_ALL);
+
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     http_response_code(200);
     exit();
@@ -100,10 +104,12 @@ try {
     // 4. Proveri postojanje Superadmin korisnika
     $chkAdmin = $conn->query("SELECT COUNT(*) FROM korisnici WHERE rola = 'superadmin' OR email = 'admin@majstornalog.rs'")->fetchColumn();
     if ($chkAdmin == 0) {
-        $conn->exec("
+        $dummyHash = '$2y$10$abcdefghijklmnopqrstuv';
+        $stmtAdmin = $conn->prepare("
             INSERT INTO `korisnici` (`firma_id`, `ime`, `prezime`, `email`, `telefon`, `lozinka`, `rola`, `boja_markera`, `aktivan`) 
-            VALUES (1, 'Super', 'Administrator', 'admin@majstornalog.rs', '069-000-000', '$2y$10$abcdefghijklmnopqrstuv', 'superadmin', '#7C3AED', 1)
+            VALUES (1, 'Super', 'Administrator', 'admin@majstornalog.rs', '069-000-000', ?, 'superadmin', '#7C3AED', 1)
         ");
+        $stmtAdmin->execute([$dummyHash]);
     }
 
     // 5. Dodaj još dve demo firme ako postoji samo jedna
