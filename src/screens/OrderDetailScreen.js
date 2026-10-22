@@ -41,8 +41,21 @@ import SignaturePad from '../components/SignaturePad';
 
 export default function OrderDetailScreen({ orderId, onBack }) {
   const { user, firmId } = useAuth();
-  const { width } = useWindowDimensions();
-  const isDesktop = width >= 850;
+  const { width, height } = useWindowDimensions();
+
+  // Detekcija orijentacije telefona / ekrana:
+  // - Uspravno (Portrait): height >= width  -> Mapa gore, detalji naloga dole
+  // - Horizontalno (Landscape): width > height -> Prikaz 50:50 kao na desktopu (Mapa levo, detalji desno)
+  const isLandscape = width > height;
+  const isDesktop = width >= 1024;
+  const isSplitLayout = isLandscape || isDesktop;
+
+  // Proračun dinamičke visine mape u zavisnosti od ekrana i orijentacije
+  const mapHeight = isDesktop
+    ? 540
+    : isLandscape
+      ? Math.max(height - 130, 220)
+      : 220;
 
   const [order, setOrder] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -170,14 +183,14 @@ export default function OrderDetailScreen({ orderId, onBack }) {
   const isDone = order.status === 'ZAVRSENO';
   const totalPrice = calculateTotal();
 
-  // Desna kolona sa svim formama i stavkama
+  // Forma sa svim detaljima, stavkama i potpisom
   const renderOrderDetailsForm = () => (
     <View style={styles.formContainer}>
       {/* Client & Device Card */}
       <View style={styles.card}>
         <View style={styles.cardRowBetween}>
           <View style={{ flex: 1 }}>
-            <Text style={styles.label}>Klijent i lokacija</Text>
+            <Text style={styles.label}>Klijent i adresa</Text>
             <Text style={styles.clientName}>{order.klijent_ime}</Text>
             <Text style={styles.clientAddress}>{order.adresa} {order.sprat_stan ? `(${order.sprat_stan})` : ''}</Text>
           </View>
@@ -220,13 +233,13 @@ export default function OrderDetailScreen({ orderId, onBack }) {
           {!isDone && (
             <TouchableOpacity style={styles.addItemBtn} onPress={handleOpenCatalog} activeOpacity={0.8}>
               <Plus size={14} color="#FFFFFF" style={{ marginRight: 4 }} />
-              <Text style={styles.addItemBtnText}>Dodaj deo / uslugu</Text>
+              <Text style={styles.addItemBtnText}>Dodaj deo / rad</Text>
             </TouchableOpacity>
           )}
         </View>
 
         {items.length === 0 ? (
-          <Text style={styles.emptyItemsText}>Nema dodatih delova. Kliknite na dugme iznad za izbor iz kataloga.</Text>
+          <Text style={styles.emptyItemsText}>Nema unetih stavki. Kliknite na dugme iznad za izbor iz kataloga.</Text>
         ) : (
           <View style={styles.itemsTable}>
             {items.map((item, idx) => (
@@ -366,37 +379,40 @@ export default function OrderDetailScreen({ orderId, onBack }) {
   return (
     <View style={styles.container}>
       {/* Top Header */}
-      <View style={styles.header}>
+      <View style={[styles.header, isLandscape && !isDesktop && styles.headerCompact]}>
         <TouchableOpacity style={styles.backBtn} onPress={onBack} activeOpacity={0.8}>
-          <ArrowLeft size={20} color="#0F172A" />
+          <ArrowLeft size={isLandscape && !isDesktop ? 18 : 20} color="#0F172A" />
         </TouchableOpacity>
-        <View style={{ flex: 1, marginLeft: 12 }}>
+        <View style={{ flex: 1, marginLeft: 10 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-            <Text style={styles.headerTitle}>{order.broj_naloga}</Text>
+            <Text style={[styles.headerTitle, isLandscape && !isDesktop && { fontSize: 15 }]}>{order.broj_naloga}</Text>
             <View style={[styles.statusBadge, { backgroundColor: isDone ? '#DEF7EC' : '#E0F2FE' }]}>
               <Text style={[styles.statusBadgeText, { color: isDone ? colors.success : colors.primary }]}>
                 {order.status}
               </Text>
             </View>
           </View>
-          <Text style={styles.headerSub}>
-            {order.tip_intervencije} • Prioritet: {order.prioritet} • Zakazano: {order.zakazano_za}
+          <Text style={[styles.headerSub, isLandscape && !isDesktop && { fontSize: 11 }]}>
+            {order.tip_intervencije} • {order.klijent_ime}
           </Text>
         </View>
       </View>
 
-      {/* Responsive Layout: Desktop 50:50 Split (Left Map, Right Details) / Mobile Stacked */}
-      {isDesktop ? (
-        <View style={styles.desktopContainer}>
-          {/* Left Column: 50% width Map & Navigation view */}
-          <View style={styles.desktopLeftCol}>
+      {/* Prikaz na osnovu orijentacije i uređaja:
+          - Horizontalno (Landscape) ili Desktop: 50:50 podeljeni ekran (Mapa levo, detalji desno)
+          - Uspravno (Portrait telefon): Vertikalni raspored (Mapa gore, detalji dole)
+      */}
+      {isSplitLayout ? (
+        <View style={[styles.splitBody, isLandscape && !isDesktop && { padding: 10, gap: 10 }]}>
+          {/* Leva polovina (50%): Karta sa navigacijom i brzim pozivom */}
+          <View style={styles.splitLeftCol}>
             <View style={styles.mapCard}>
               <View style={styles.mapHeaderBar}>
-                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                  <MapPin size={17} color={colors.primary} style={{ marginRight: 6 }} />
-                  <Text style={styles.mapHeaderTitle}>Karta terena i lokacija klijenta</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
+                  <MapPin size={16} color={colors.primary} style={{ marginRight: 6 }} />
+                  <Text style={styles.mapHeaderTitle} numberOfLines={1}>Lokacija i ruta</Text>
                 </View>
-                <Text style={styles.mapHeaderSub}>{order.adresa}</Text>
+                <Text style={styles.mapHeaderSub} numberOfLines={1}>{order.adresa}</Text>
               </View>
 
               <MapComponent
@@ -407,38 +423,48 @@ export default function OrderDetailScreen({ orderId, onBack }) {
                   address: order.adresa
                 } : null}
                 workerLocation={{ lat: 44.6627, lng: 20.9300 }}
-                height={520}
+                height={mapHeight}
               />
 
-              {/* Map Footer Info */}
-              <View style={styles.mapFooterBox}>
+              {/* Sažetak klijenta na dnu mape */}
+              <View style={[styles.mapFooterBox, isLandscape && !isDesktop && { padding: 8 }]}>
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.mapFooterClient}>{order.klijent_ime}</Text>
-                  <Text style={styles.mapFooterAddress}>{order.adresa} {order.sprat_stan ? `(${order.sprat_stan})` : ''}</Text>
-                  <Text style={styles.mapFooterPhone}>Tel: {order.klijent_telefon}</Text>
+                  <Text style={styles.mapFooterClient} numberOfLines={1}>{order.klijent_ime}</Text>
+                  <Text style={styles.mapFooterAddress} numberOfLines={1}>{order.adresa} {order.sprat_stan ? `(${order.sprat_stan})` : ''}</Text>
                 </View>
                 <TouchableOpacity
                   style={styles.mapCallBtn}
                   onPress={() => Linking.openURL(`tel:${order.klijent_telefon}`)}
                   activeOpacity={0.8}
                 >
-                  <Phone size={16} color="#FFFFFF" style={{ marginRight: 6 }} />
+                  <Phone size={15} color="#FFFFFF" style={{ marginRight: 5 }} />
                   <Text style={styles.mapCallBtnText}>Pozovi</Text>
                 </TouchableOpacity>
               </View>
             </View>
           </View>
 
-          {/* Right Column: 50% width scrollable Order Details */}
-          <ScrollView style={styles.desktopRightCol} contentContainerStyle={styles.desktopRightContent}>
+          {/* Desna polovina (50%): Skrolabilni detalji radnog naloga */}
+          <ScrollView
+            style={styles.splitRightCol}
+            contentContainerStyle={styles.splitRightContent}
+            keyboardShouldPersistTaps="handled"
+          >
             {renderOrderDetailsForm()}
           </ScrollView>
         </View>
       ) : (
-        /* Mobile Layout: Stacked vertically */
-        <ScrollView contentContainerStyle={styles.mobileScroll}>
+        /* Uspravno (Portrait na telefonu): Mapa stoji gore, nalog ispod */
+        <ScrollView
+          contentContainerStyle={styles.portraitScroll}
+          keyboardShouldPersistTaps="handled"
+        >
           {order.gpsX && order.gpsY ? (
-            <View style={styles.mobileMapSection}>
+            <View style={styles.portraitMapCard}>
+              <View style={styles.portraitMapHeader}>
+                <MapPin size={15} color={colors.primary} style={{ marginRight: 6 }} />
+                <Text style={styles.portraitMapTitle}>{order.adresa}</Text>
+              </View>
               <MapComponent
                 clientLocation={{
                   lat: parseFloat(order.gpsX),
@@ -536,8 +562,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 16,
-    paddingTop: Platform.OS === 'ios' ? 44 : 14,
-    paddingBottom: 14,
+    paddingTop: Platform.OS === 'ios' ? 44 : 12,
+    paddingBottom: 12,
     backgroundColor: '#FFFFFF',
     borderBottomWidth: 1,
     borderBottomColor: '#E2E8F0',
@@ -548,68 +574,87 @@ const styles = StyleSheet.create({
     elevation: 2,
     zIndex: 10
   },
+  headerCompact: {
+    paddingTop: 8,
+    paddingBottom: 8,
+    paddingHorizontal: 12
+  },
   backBtn: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     backgroundColor: '#F1F5F9',
     justifyContent: 'center',
     alignItems: 'center'
   },
   headerTitle: {
-    fontSize: 17,
+    fontSize: 16,
     fontWeight: '900',
     color: '#0F172A'
   },
   headerSub: {
-    fontSize: 12,
+    fontSize: 11.5,
     color: '#64748B',
-    marginTop: 2
+    marginTop: 1
   },
   statusBadge: {
-    paddingHorizontal: 8,
+    paddingHorizontal: 7,
     paddingVertical: 2,
     borderRadius: 6,
     marginLeft: 8
   },
   statusBadgeText: {
-    fontSize: 11,
+    fontSize: 10.5,
     fontWeight: '800'
   },
 
-  // Desktop 50:50 Split Layout
-  desktopContainer: {
+  // Split Layout (Horizontalno telefon ili Desktop)
+  splitBody: {
     flex: 1,
     flexDirection: 'row',
-    padding: 16,
-    gap: 16
+    padding: 14,
+    gap: 14
   },
-  desktopLeftCol: {
+  splitLeftCol: {
     flex: 1, // 50%
     height: '100%'
   },
-  desktopRightCol: {
+  splitRightCol: {
     flex: 1, // 50%
     height: '100%'
   },
-  desktopRightContent: {
+  splitRightContent: {
     paddingBottom: 24
   },
 
-  // Mobile Stacked Layout
-  mobileScroll: {
-    padding: 14,
+  // Uspravno (Portrait telefon)
+  portraitScroll: {
+    padding: 12,
     paddingBottom: 24
   },
-  mobileMapSection: {
+  portraitMapCard: {
     borderRadius: 14,
     overflow: 'hidden',
     borderWidth: 1,
     borderColor: '#CBD5E1',
-    marginBottom: 12
+    marginBottom: 12,
+    backgroundColor: '#FFFFFF'
+  },
+  portraitMapHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E2E8F0'
+  },
+  portraitMapTitle: {
+    fontSize: 12.5,
+    fontWeight: '700',
+    color: '#334155'
   },
 
-  // Map Card on Desktop
+  // Map Card u Split režimu
   mapCard: {
     backgroundColor: '#FFFFFF',
     borderRadius: 14,
@@ -623,8 +668,8 @@ const styles = StyleSheet.create({
     elevation: 3
   },
   mapHeaderBar: {
-    paddingHorizontal: 14,
-    paddingVertical: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
     backgroundColor: '#FFFFFF',
     borderBottomWidth: 1,
     borderBottomColor: '#E2E8F0',
@@ -633,12 +678,12 @@ const styles = StyleSheet.create({
     alignItems: 'center'
   },
   mapHeaderTitle: {
-    fontSize: 13.5,
+    fontSize: 13,
     fontWeight: '800',
     color: '#0F172A'
   },
   mapHeaderSub: {
-    fontSize: 12,
+    fontSize: 11.5,
     color: '#64748B',
     fontWeight: '600'
   },
@@ -646,39 +691,33 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    padding: 12,
+    padding: 10,
     backgroundColor: '#F8FAFC',
     borderTopWidth: 1,
     borderTopColor: '#E2E8F0'
   },
   mapFooterClient: {
-    fontSize: 14,
+    fontSize: 13.5,
     fontWeight: '800',
     color: '#0F172A'
   },
   mapFooterAddress: {
-    fontSize: 12,
-    color: '#475569',
-    marginTop: 2
-  },
-  mapFooterPhone: {
     fontSize: 11.5,
-    color: colors.primary,
-    fontWeight: '700',
-    marginTop: 2
+    color: '#475569',
+    marginTop: 1
   },
   mapCallBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: colors.success,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
     borderRadius: 8
   },
   mapCallBtnText: {
     color: '#FFFFFF',
     fontWeight: '700',
-    fontSize: 13
+    fontSize: 12.5
   },
 
   // Form Cards
@@ -688,7 +727,7 @@ const styles = StyleSheet.create({
   card: {
     backgroundColor: '#FFFFFF',
     borderRadius: 14,
-    padding: 16,
+    padding: 14,
     borderWidth: 1,
     borderColor: '#CBD5E1',
     shadowColor: '#000',
@@ -703,51 +742,51 @@ const styles = StyleSheet.create({
     alignItems: 'center'
   },
   label: {
-    fontSize: 11,
+    fontSize: 10.5,
     color: '#64748B',
     fontWeight: '700',
     textTransform: 'uppercase'
   },
   clientName: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '800',
     color: '#0F172A',
     marginTop: 2
   },
   clientAddress: {
-    fontSize: 13,
+    fontSize: 12.5,
     color: '#475569',
     marginTop: 2
   },
   callCircleBtn: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     backgroundColor: colors.success,
     justifyContent: 'center',
     alignItems: 'center',
-    marginLeft: 12
+    marginLeft: 10
   },
   appliancePill: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#F0F9FF',
     paddingHorizontal: 10,
-    paddingVertical: 7,
+    paddingVertical: 6,
     borderRadius: 8,
-    marginTop: 10,
+    marginTop: 9,
     borderWidth: 1,
     borderColor: '#BAE6FD'
   },
   applianceText: {
-    fontSize: 12,
+    fontSize: 11.5,
     color: '#0369A1'
   },
   faultNotice: {
     backgroundColor: '#FFFBEB',
     padding: 10,
     borderRadius: 8,
-    marginTop: 10,
+    marginTop: 9,
     borderWidth: 1,
     borderColor: '#FEF3C7'
   },
@@ -757,17 +796,17 @@ const styles = StyleSheet.create({
     color: '#B45309'
   },
   faultDesc: {
-    fontSize: 12.5,
+    fontSize: 12,
     color: '#78350F',
     marginTop: 2
   },
   sectionTitle: {
-    fontSize: 14,
+    fontSize: 13.5,
     fontWeight: '800',
     color: '#0F172A'
   },
   sectionSubtitle: {
-    fontSize: 11.5,
+    fontSize: 11,
     color: '#64748B',
     marginTop: 1
   },
@@ -775,44 +814,44 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: colors.primary,
-    paddingHorizontal: 12,
-    paddingVertical: 7,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
     borderRadius: 8
   },
   addItemBtnText: {
     color: '#FFFFFF',
-    fontSize: 12,
+    fontSize: 11.5,
     fontWeight: '700'
   },
   emptyItemsText: {
-    fontSize: 12.5,
+    fontSize: 12,
     color: '#94A3B8',
-    marginTop: 10,
+    marginTop: 8,
     fontStyle: 'italic'
   },
   itemsTable: {
-    marginTop: 12
+    marginTop: 10
   },
   itemRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingVertical: 9,
+    paddingVertical: 8,
     borderBottomWidth: 1,
     borderBottomColor: '#F1F5F9'
   },
   itemName: {
-    fontSize: 13,
+    fontSize: 12.5,
     fontWeight: '700',
     color: '#0F172A'
   },
   itemSub: {
-    fontSize: 11,
+    fontSize: 10.5,
     color: '#64748B',
     marginTop: 2
   },
   itemPrice: {
-    fontSize: 13,
+    fontSize: 12.5,
     fontWeight: '800',
     color: '#0F172A'
   },
@@ -820,18 +859,18 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginTop: 12,
-    paddingTop: 10,
+    marginTop: 10,
+    paddingTop: 8,
     borderTopWidth: 2,
     borderTopColor: '#E2E8F0'
   },
   totalLabel: {
-    fontSize: 13,
+    fontSize: 12.5,
     fontWeight: '800',
     color: '#334155'
   },
   totalValue: {
-    fontSize: 17,
+    fontSize: 16,
     fontWeight: '900',
     color: colors.primary
   },
@@ -840,25 +879,25 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#E2E8F0',
     borderRadius: 10,
-    padding: 12,
-    fontSize: 13,
+    padding: 10,
+    fontSize: 12.5,
     color: '#0F172A',
     marginTop: 8,
-    minHeight: 80,
+    minHeight: 70,
     textAlignVertical: 'top'
   },
   paymentRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 8,
-    marginTop: 10
+    marginTop: 9
   },
   payPill: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#F1F5F9',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+    paddingHorizontal: 11,
+    paddingVertical: 7,
     borderRadius: 8,
     borderWidth: 1,
     borderColor: '#E2E8F0'
@@ -868,7 +907,7 @@ const styles = StyleSheet.create({
     borderColor: colors.primary
   },
   payPillText: {
-    fontSize: 12,
+    fontSize: 11.5,
     fontWeight: '700',
     color: '#475569'
   },
@@ -884,12 +923,12 @@ const styles = StyleSheet.create({
     borderRadius: 6
   },
   signActionBtnText: {
-    fontSize: 12,
+    fontSize: 11.5,
     color: colors.primary,
     fontWeight: '700'
   },
   signaturePlaceholder: {
-    height: 110,
+    height: 95,
     borderWidth: 1.5,
     borderStyle: 'dashed',
     borderColor: '#CBD5E1',
@@ -897,16 +936,16 @@ const styles = StyleSheet.create({
     backgroundColor: '#F8FAFC',
     justifyContent: 'center',
     alignItems: 'center',
-    marginTop: 10
+    marginTop: 9
   },
   placeholderText: {
-    fontSize: 12.5,
+    fontSize: 12,
     color: '#64748B',
     fontWeight: '600'
   },
   signaturePreviewBox: {
-    marginTop: 10,
-    padding: 10,
+    marginTop: 9,
+    padding: 8,
     backgroundColor: '#F8FAFC',
     borderRadius: 10,
     borderWidth: 1,
@@ -915,17 +954,17 @@ const styles = StyleSheet.create({
   },
   signatureImage: {
     width: '100%',
-    height: 90
+    height: 80
   },
   signedLabel: {
-    fontSize: 11.5,
+    fontSize: 11,
     fontWeight: '700',
     color: colors.success,
-    marginTop: 6
+    marginTop: 5
   },
   completeOrderBtn: {
     backgroundColor: colors.success,
-    paddingVertical: 15,
+    paddingVertical: 14,
     borderRadius: 12,
     flexDirection: 'row',
     justifyContent: 'center',
@@ -939,7 +978,7 @@ const styles = StyleSheet.create({
   },
   completeOrderBtnText: {
     color: '#FFFFFF',
-    fontSize: 14.5,
+    fontSize: 14,
     fontWeight: '800',
     letterSpacing: 0.5
   },
@@ -948,8 +987,8 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#BCF0DA',
     borderRadius: 12,
-    paddingVertical: 14,
-    paddingHorizontal: 16,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
@@ -957,7 +996,7 @@ const styles = StyleSheet.create({
   },
   orderCompletedBannerText: {
     color: '#03543F',
-    fontSize: 14,
+    fontSize: 13.5,
     fontWeight: '700'
   },
 

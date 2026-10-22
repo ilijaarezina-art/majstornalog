@@ -102,6 +102,12 @@ const getMapHtml = (data) => `
       }
     }
 
+    window.addEventListener('resize', function() {
+      if (map) {
+        setTimeout(function() { map.invalidateSize(); }, 200);
+      }
+    });
+
     window.addEventListener('message', function(e) {
       try {
         var payload = JSON.parse(e.data);
