@@ -312,6 +312,24 @@ export default function WorkerOrdersScreen({ onSelectOrder, onOpenDispatcher }) 
             </TouchableOpacity>
           )}
 
+          {item.status === 'ODLOZENO' && (
+            <TouchableOpacity
+              style={[styles.actionBtn, styles.acceptBtn]}
+              onPress={() => handleUpdateStatus(item.id, 'PRIHVACENO', 'Ponovno pokretanje')}
+              disabled={isBusy}
+              activeOpacity={0.8}
+            >
+              {isBusy ? (
+                <ActivityIndicator size="small" color="#FFFFFF" />
+              ) : (
+                <>
+                  <RotateCcw size={15} color="#FFFFFF" style={{ marginRight: 6 }} />
+                  <Text style={styles.btnTextWhite}>Ponovo prihvati</Text>
+                </>
+              )}
+            </TouchableOpacity>
+          )}
+
           {/* Secondary Details Button */}
           <TouchableOpacity
             style={[styles.detailBtn, isDone && { flex: 1 }]}

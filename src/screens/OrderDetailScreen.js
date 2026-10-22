@@ -272,6 +272,34 @@ export default function OrderDetailScreen({ orderId, onBack }) {
             </TouchableOpacity>
           )}
 
+          {order.status === 'ODLOZENO' && (
+            <View style={{ gap: 8 }}>
+              <View style={[styles.workingNoticeBox, { backgroundColor: '#FEE2E2', borderColor: '#FECACA' }]}>
+                <AlertTriangle size={16} color="#DC2626" style={{ marginRight: 8 }} />
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontSize: 12.5, fontWeight: '800', color: '#991B1B' }}>Nalog je trenutno odložen</Text>
+                  {order.razlog_odlaganja ? (
+                    <Text style={{ fontSize: 11.5, color: '#7F1D1D', marginTop: 2 }}>Razlog: {order.razlog_odlaganja}</Text>
+                  ) : null}
+                </View>
+              </View>
+
+              <TouchableOpacity
+                style={[styles.bigStepBtn, { backgroundColor: '#0284C7' }]}
+                onPress={() => handleUpdateStatus('PRIHVACENO', 'Ponovno aktiviranje odloženog naloga')}
+                disabled={statusLoading}
+                activeOpacity={0.8}
+              >
+                {statusLoading ? <ActivityIndicator color="#FFFFFF" /> : (
+                  <>
+                    <RotateCcw size={18} color="#FFFFFF" style={{ marginRight: 8 }} />
+                    <Text style={styles.bigStepBtnText}>PONOVO AKTIVIRAJ / PRIHVATI NALOG</Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            </View>
+          )}
+
           {order.status === 'PRIHVACENO' && (
             <TouchableOpacity
               style={[styles.bigStepBtn, { backgroundColor: '#4F46E5' }]}
