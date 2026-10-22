@@ -44,6 +44,19 @@ if (fs.existsSync(indexPath)) {
   if (!html.includes('<base href="/majstornalog/" />')) {
     html = html.replace('<title>MajstorNalog</title>', '<title>MajstorNalog</title>\n    <base href="/majstornalog/" />');
   }
+  if (!html.includes('origAddEventListener')) {
+    const patchScript = `
+    <script>
+      (function() {
+        var origAdd = window.addEventListener;
+        window.addEventListener = function(type, listener, options) {
+          if (type === 'unload') return;
+          return origAdd.call(this, type, listener, options);
+        };
+      })();
+    </script>`;
+    html = html.replace('</head>', `${patchScript}\n  </head>`);
+  }
   html = html.replace(/src="\/_expo\//g, 'src="./_expo/');
   fs.writeFileSync(indexPath, html, 'utf8');
   console.log('Successfully synced web distribution and patched index.html for cPanel deployment.');

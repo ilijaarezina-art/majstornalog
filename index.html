@@ -24,6 +24,16 @@
         flex: 1;
       }
     </style>
+  
+    <script>
+      (function() {
+        var origAdd = window.addEventListener;
+        window.addEventListener = function(type, listener, options) {
+          if (type === 'unload') return;
+          return origAdd.call(this, type, listener, options);
+        };
+      })();
+    </script>
   </head>
 
   <body>
