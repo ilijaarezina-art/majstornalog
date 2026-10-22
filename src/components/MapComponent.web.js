@@ -165,6 +165,12 @@ export default function MapComponent({
     } else if (bounds.length === 1) {
       map.setView(bounds[0], 15);
     }
+
+    setTimeout(() => {
+      if (mapInstanceRef.current) {
+        mapInstanceRef.current.invalidateSize();
+      }
+    }, 200);
   };
 
   useEffect(() => {
