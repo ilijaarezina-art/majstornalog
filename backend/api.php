@@ -140,6 +140,11 @@ try {
     // 7. Automatsko usklađivanje: ako je datum_isteka < CURDATE(), status automatski postaje ISTEKAO
     $conn->exec("
         UPDATE firme 
+        SET datum_isteka = DATE_ADD(CURDATE(), INTERVAL 30 DAY) 
+        WHERE datum_isteka IS NULL OR datum_isteka = '0000-00-00' OR datum_isteka < '2024-01-01'
+    ");
+    $conn->exec("
+        UPDATE firme 
         SET status_pretplate = 'ISTEKAO' 
         WHERE datum_isteka IS NOT NULL 
           AND datum_isteka < CURDATE() 
@@ -542,7 +547,12 @@ elseif ($action === 'get_dispatcher_dashboard') {
 // 9. SUPERADMIN: DASHBOARD (GET_SUPERADMIN_DASHBOARD)
 // ==========================================================
 elseif ($action === 'get_superadmin_dashboard') {
-    // 1. Automatsko usklađivanje isteklih licenci
+    // 1. Automatsko usklađivanje isteklih licenci i korekcija netačnih datuma
+    $conn->exec("
+        UPDATE firme 
+        SET datum_isteka = DATE_ADD(CURDATE(), INTERVAL 30 DAY) 
+        WHERE datum_isteka IS NULL OR datum_isteka = '0000-00-00' OR datum_isteka < '2024-01-01'
+    ");
     $conn->exec("
         UPDATE firme 
         SET status_pretplate = 'ISTEKAO' 

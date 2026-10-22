@@ -23,7 +23,6 @@ import {
   AlertTriangle,
   Plus,
   Edit3,
-  CalendarPlus,
   RefreshCw,
   LogOut,
   Sliders,
@@ -40,35 +39,39 @@ import { useAuth } from '../context/AuthContext';
 import { api } from '../services/api';
 import { colors } from '../theme/colors';
 
-// ==========================================================
-// INTERAKTIVNI KALENDAR MODAL ZA IZBOR DATUMA ISTEKA LICENCE
-// ==========================================================
-function CalendarModal({ visible, initialDate, onSelect, onClose }) {
-  const parseDate = (dStr) => {
-    if (!dStr) return new Date();
-    const parts = dStr.split('-');
-    if (parts.length === 3) {
-      const y = parseInt(parts[0], 10);
-      const m = parseInt(parts[1], 10) - 1;
-      const d = parseInt(parts[2], 10);
-      if (!isNaN(y) && !isNaN(m) && !isNaN(d)) {
-        return new Date(y, m, d);
-      }
-    }
-    return new Date();
-  };
+// Pomoćna funkcija za sigurno parsiranje datuma (garantuje godinu >= 2024)
+const safeParseDate = (dStr) => {
+  const now = new Date();
+  if (!dStr || typeof dStr !== 'string') return now;
+  const clean = dStr.trim();
+  if (clean === '' || clean.startsWith('0000')) return now;
 
-  const [currentMonth, setCurrentMonth] = useState(() => parseDate(initialDate));
-  const [selected, setSelected] = useState(initialDate || '');
+  const parts = clean.split('-');
+  if (parts.length === 3) {
+    const y = parseInt(parts[0], 10);
+    const m = parseInt(parts[1], 10) - 1;
+    const d = parseInt(parts[2], 10);
+    if (!isNaN(y) && !isNaN(m) && !isNaN(d) && y >= 2024 && y <= 2100 && m >= 0 && m <= 11 && d >= 1 && d <= 31) {
+      const dt = new Date(y, m, d);
+      if (!isNaN(dt.getTime())) return dt;
+    }
+  }
+  return now;
+};
+
+// ==========================================================
+// INLINE KALENDAR KOMPONENTA DIREKTNO UNUTAR EDIT FORME
+// ==========================================================
+function InlineCalendarPicker({ value, onChange }) {
+  const [currentMonth, setCurrentMonth] = useState(() => safeParseDate(value));
 
   useEffect(() => {
-    if (visible) {
-      setSelected(initialDate || '');
-      setCurrentMonth(parseDate(initialDate));
+    if (value) {
+      setCurrentMonth(safeParseDate(value));
     }
-  }, [visible, initialDate]);
+  }, [value]);
 
-  const year = currentMonth.getFullYear();
+  const year = Math.max(2024, currentMonth.getFullYear());
   const month = currentMonth.getMonth(); // 0-11
 
   const monthNames = [
@@ -84,7 +87,7 @@ function CalendarModal({ visible, initialDate, onSelect, onClose }) {
     setCurrentMonth(new Date(year, month + 1, 1));
   };
 
-  // Računanje dana: ponedeljak = 0 ... nedelja = 6
+  // Ponedeljak = 0 ... Nedelja = 6
   const firstDayRaw = new Date(year, month, 1).getDay();
   const startDayOffset = (firstDayRaw + 6) % 7;
   const daysInMonth = new Date(year, month + 1, 0).getDate();
@@ -100,120 +103,107 @@ function CalendarModal({ visible, initialDate, onSelect, onClose }) {
 
   const todayStr = new Date().toISOString().split('T')[0];
 
-  const handlePick = (dStr) => {
-    setSelected(dStr);
-    onSelect(dStr);
+  const handlePickDate = (dStr) => {
+    onChange(dStr);
   };
 
   const handleQuickAdd = (months) => {
     const d = new Date();
     d.setMonth(d.getMonth() + months);
     const s = d.toISOString().split('T')[0];
-    handlePick(s);
+    onChange(s);
+    setCurrentMonth(safeParseDate(s));
   };
 
-  const handleSetEndOfYear = (y) => {
-    handlePick(`${y}-12-31`);
+  const handleSetEndOfYear = (targetYear) => {
+    const s = `${targetYear}-12-31`;
+    onChange(s);
+    setCurrentMonth(safeParseDate(s));
   };
 
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-      <View style={styles.calendarOverlay}>
-        <View style={styles.calendarModalBox}>
-          {/* Header */}
-          <View style={styles.calendarHeaderRow}>
-            <TouchableOpacity onPress={prevMonth} style={styles.calNavBtn} activeOpacity={0.7}>
-              <ChevronLeft size={20} color="#1E293B" />
-            </TouchableOpacity>
+    <View style={styles.inlineCalContainer}>
+      {/* Zaglavlje kalendara */}
+      <View style={styles.inlineCalHeader}>
+        <TouchableOpacity onPress={prevMonth} style={styles.inlineCalNavBtn} activeOpacity={0.7}>
+          <ChevronLeft size={18} color="#0F172A" />
+        </TouchableOpacity>
 
-            <View style={{ alignItems: 'center' }}>
-              <Text style={styles.calMonthText}>{monthNames[month]} {year}</Text>
-              <Text style={styles.calHelpSub}>Kliknite na dan za definisanje licence DO</Text>
-            </View>
-
-            <TouchableOpacity onPress={nextMonth} style={styles.calNavBtn} activeOpacity={0.7}>
-              <ChevronRight size={20} color="#1E293B" />
-            </TouchableOpacity>
-          </View>
-
-          {/* Nazivi dana */}
-          <View style={styles.calWeekdaysRow}>
-            {['Pon', 'Uto', 'Sre', 'Čet', 'Pet', 'Sub', 'Ned'].map((wd, i) => (
-              <Text key={i} style={[styles.calWeekdayText, (i === 5 || i === 6) && { color: '#DC2626' }]}>
-                {wd}
-              </Text>
-            ))}
-          </View>
-
-          {/* Mreža dana */}
-          <View style={styles.calGrid}>
-            {daysGrid.map((item) => {
-              if (item.empty) {
-                return <View key={item.id} style={styles.calDayCell} />;
-              }
-              const isSelected = selected === item.dateStr;
-              const isToday = todayStr === item.dateStr;
-              return (
-                <TouchableOpacity
-                  key={item.id}
-                  style={[
-                    styles.calDayCell,
-                    isToday && styles.calDayToday,
-                    isSelected && styles.calDaySelected
-                  ]}
-                  onPress={() => handlePick(item.dateStr)}
-                  activeOpacity={0.7}
-                >
-                  <Text
-                    style={[
-                      styles.calDayText,
-                      isToday && styles.calDayTodayText,
-                      isSelected && styles.calDaySelectedText
-                    ]}
-                  >
-                    {item.day}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
-          </View>
-
-          {/* Brzi izbor trajanja */}
-          <Text style={styles.calPresetsLabel}>Brzi skok trajanja licence:</Text>
-          <View style={styles.calPresetsRow}>
-            <TouchableOpacity style={styles.calPresetBtn} onPress={() => handleQuickAdd(1)} activeOpacity={0.7}>
-              <Text style={styles.calPresetBtnText}>+30 dana</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.calPresetBtn} onPress={() => handleQuickAdd(3)} activeOpacity={0.7}>
-              <Text style={styles.calPresetBtnText}>+3 meseca</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.calPresetBtn} onPress={() => handleQuickAdd(6)} activeOpacity={0.7}>
-              <Text style={styles.calPresetBtnText}>+6 meseci</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.calPresetBtn} onPress={() => handleQuickAdd(12)} activeOpacity={0.7}>
-              <Text style={styles.calPresetBtnText}>+1 godina</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.calPresetBtn} onPress={() => handleSetEndOfYear(new Date().getFullYear())} activeOpacity={0.7}>
-              <Text style={styles.calPresetBtnText}>31.12.{new Date().getFullYear()}</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.calPresetBtn} onPress={() => handleSetEndOfYear(new Date().getFullYear() + 1)} activeOpacity={0.7}>
-              <Text style={styles.calPresetBtnText}>31.12.{new Date().getFullYear() + 1}</Text>
-            </TouchableOpacity>
-          </View>
-
-          {/* Izabrani datum i dugme za zatvaranje */}
-          <View style={styles.calFooter}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.calSelectedInfoLabel}>Izabrano važenje do:</Text>
-              <Text style={styles.calSelectedInfoValue}>{selected || 'Nije izabrano'}</Text>
-            </View>
-            <TouchableOpacity style={styles.calCloseBtn} onPress={onClose} activeOpacity={0.8}>
-              <Text style={styles.calCloseBtnText}>Potvrdi i zatvori</Text>
-            </TouchableOpacity>
-          </View>
+        <View style={{ alignItems: 'center' }}>
+          <Text style={styles.inlineCalMonthTitle}>{monthNames[month]} {year}</Text>
+          <Text style={styles.inlineCalMonthSub}>Kliknite na dan za izbor datuma isteka DO</Text>
         </View>
+
+        <TouchableOpacity onPress={nextMonth} style={styles.inlineCalNavBtn} activeOpacity={0.7}>
+          <ChevronRight size={18} color="#0F172A" />
+        </TouchableOpacity>
       </View>
-    </Modal>
+
+      {/* Dani u sedmici */}
+      <View style={styles.inlineCalWeekdaysRow}>
+        {['Pon', 'Uto', 'Sre', 'Čet', 'Pet', 'Sub', 'Ned'].map((wd, i) => (
+          <Text key={i} style={[styles.inlineCalWeekdayText, (i === 5 || i === 6) && { color: '#DC2626' }]}>
+            {wd}
+          </Text>
+        ))}
+      </View>
+
+      {/* Mreža dana */}
+      <View style={styles.inlineCalGrid}>
+        {daysGrid.map((item) => {
+          if (item.empty) {
+            return <View key={item.id} style={styles.inlineCalCell} />;
+          }
+          const isSelected = value === item.dateStr;
+          const isToday = todayStr === item.dateStr;
+          return (
+            <TouchableOpacity
+              key={item.id}
+              style={[
+                styles.inlineCalCell,
+                isToday && styles.inlineCalCellToday,
+                isSelected && styles.inlineCalCellSelected
+              ]}
+              onPress={() => handlePickDate(item.dateStr)}
+              activeOpacity={0.7}
+            >
+              <Text
+                style={[
+                  styles.inlineCalCellText,
+                  isToday && styles.inlineCalCellTextToday,
+                  isSelected && styles.inlineCalCellTextSelected
+                ]}
+              >
+                {item.day}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+
+      {/* Prečice za brzo produženje licence */}
+      <Text style={styles.inlineCalShortcutsLabel}>Brzo definisanje trajanja licence:</Text>
+      <View style={styles.inlineCalShortcutsRow}>
+        <TouchableOpacity style={styles.inlineCalShortcutBtn} onPress={() => handleQuickAdd(1)} activeOpacity={0.7}>
+          <Text style={styles.inlineCalShortcutText}>+30 dana</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.inlineCalShortcutBtn} onPress={() => handleQuickAdd(3)} activeOpacity={0.7}>
+          <Text style={styles.inlineCalShortcutText}>+3 meseca</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.inlineCalShortcutBtn} onPress={() => handleQuickAdd(6)} activeOpacity={0.7}>
+          <Text style={styles.inlineCalShortcutText}>+6 meseci</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.inlineCalShortcutBtn} onPress={() => handleQuickAdd(12)} activeOpacity={0.7}>
+          <Text style={styles.inlineCalShortcutText}>+1 godina</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.inlineCalShortcutBtn} onPress={() => handleSetEndOfYear(new Date().getFullYear())} activeOpacity={0.7}>
+          <Text style={styles.inlineCalShortcutText}>31.12.{new Date().getFullYear()}</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.inlineCalShortcutBtn} onPress={() => handleSetEndOfYear(new Date().getFullYear() + 1)} activeOpacity={0.7}>
+          <Text style={styles.inlineCalShortcutText}>31.12.{new Date().getFullYear() + 1}</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
   );
 }
 
@@ -254,11 +244,6 @@ export default function SuperAdminScreen({ onOpenDispatcher }) {
     datum_isteka: ''
   });
   const [saving, setSaving] = useState(false);
-
-  // Kalendar modal stanje
-  const [calendarVisible, setCalendarVisible] = useState(false);
-  const [calendarTargetFirmId, setCalendarTargetFirmId] = useState(null);
-  const [calendarInitialDate, setCalendarInitialDate] = useState('');
 
   const loadData = useCallback(async () => {
     try {
@@ -301,6 +286,14 @@ export default function SuperAdminScreen({ onOpenDispatcher }) {
   };
 
   const handleEditFirm = (firm) => {
+    // Sanitizacija datuma: ako je u bazi prazno ili nevalidno, postavi 30 dana od danas
+    let cleanDate = firm.datum_isteka;
+    if (!cleanDate || cleanDate.startsWith('0000') || cleanDate < '2024-01-01') {
+      const fallback = new Date();
+      fallback.setDate(fallback.getDate() + 30);
+      cleanDate = fallback.toISOString().split('T')[0];
+    }
+
     setEditingFirm(firm);
     setFirmForm({
       id: firm.id,
@@ -313,7 +306,7 @@ export default function SuperAdminScreen({ onOpenDispatcher }) {
       email: firm.email || '',
       paket: firm.paket || 'STANDARD',
       status_pretplate: firm.status_pretplate === 'BLOKIRAN' ? 'ISTEKAO' : (firm.status_pretplate || 'AKTIVAN'),
-      datum_isteka: firm.datum_isteka || ''
+      datum_isteka: cleanDate
     });
     setShowFirmModal(true);
   };
@@ -333,55 +326,6 @@ export default function SuperAdminScreen({ onOpenDispatcher }) {
       Alert.alert('Greška', err.message || 'Neuspešno čuvanje firme.');
     } finally {
       setSaving(false);
-    }
-  };
-
-  const handleExtendLicense = async (firmId, months) => {
-    try {
-      await api.extendFirmLicense(firmId, months);
-      Alert.alert('Licenca produžena', `Licenca firme je uspešno produžena za ${months} mesec(a).`);
-      loadData();
-    } catch (err) {
-      Alert.alert('Greška', err.message || 'Neuspešno produženje licence.');
-    }
-  };
-
-  // Otvaranje kalendara direktno sa kartice servisa
-  const handleOpenCalendarForFirm = (firm) => {
-    setCalendarTargetFirmId(firm.id);
-    setCalendarInitialDate(firm.datum_isteka || new Date().toISOString().split('T')[0]);
-    setCalendarVisible(true);
-  };
-
-  // Otvaranje kalendara iz forme za izmenu/unos
-  const handleOpenCalendarForForm = () => {
-    setCalendarTargetFirmId(null);
-    setCalendarInitialDate(firmForm.datum_isteka || new Date().toISOString().split('T')[0]);
-    setCalendarVisible(true);
-  };
-
-  // Odabir datuma iz kalendara
-  const handleDateSelected = async (selectedDateStr) => {
-    if (calendarTargetFirmId) {
-      // Direktna promena datuma za firmu sa kartice
-      const targetFirm = firme.find(f => f.id === calendarTargetFirmId);
-      if (targetFirm) {
-        try {
-          await api.saveFirm({
-            ...targetFirm,
-            datum_isteka: selectedDateStr
-          });
-          loadData();
-        } catch (err) {
-          Alert.alert('Greška', 'Neuspešna promena datuma licence: ' + err.message);
-        }
-      }
-    } else {
-      // Promena unutar forme za unos/izmenu
-      setFirmForm(prev => ({
-        ...prev,
-        datum_isteka: selectedDateStr
-      }));
     }
   };
 
@@ -551,12 +495,8 @@ export default function SuperAdminScreen({ onOpenDispatcher }) {
 
                   {/* PREGLED PO SERVISU: Važenje Licence DO, Majstori na terenu i Nalozi u mesecu */}
                   <View style={styles.serviceMetricsBanner}>
-                    {/* 1. Licenca važi DO sa mogućnošću klika na kalendar */}
-                    <TouchableOpacity
-                      style={[styles.metricTile, isExpired && styles.metricTileDanger]}
-                      onPress={() => handleOpenCalendarForFirm(f)}
-                      activeOpacity={0.8}
-                    >
+                    {/* 1. Licenca važi DO */}
+                    <View style={[styles.metricTile, isExpired && styles.metricTileDanger]}>
                       <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 2 }}>
                         <Calendar size={13} color={isExpired ? '#DC2626' : '#7C3AED'} style={{ marginRight: 4 }} />
                         <Text style={[styles.metricTileLabel, isExpired && { color: '#991B1B' }]}>Licenca važi DO:</Text>
@@ -567,9 +507,9 @@ export default function SuperAdminScreen({ onOpenDispatcher }) {
                       <Text style={[styles.metricTileSub, isExpired && { color: '#B91C1C' }]}>
                         {f.preostalo_dana !== null
                           ? (f.preostalo_dana >= 0 ? `Još ${f.preostalo_dana} dana` : `Istekla pre ${Math.abs(f.preostalo_dana)} dana`)
-                          : 'Klik za kalendar'}
+                          : ''}
                       </Text>
-                    </TouchableOpacity>
+                    </View>
 
                     {/* 2. Majstori na terenu (Definisano u servisu vs Max limit paketa) */}
                     <View style={[styles.metricTile, isMajstoriFull && styles.metricTileWarning]}>
@@ -606,45 +546,22 @@ export default function SuperAdminScreen({ onOpenDispatcher }) {
                     </View>
                   </View>
 
-                  {/* Donji red sa akcijama */}
+                  {/* Donji red: Isključivo dugme za Izmenu servisa */}
                   <View style={styles.firmCardBottom}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.firmBottomHint}>
+                        Za promenu licence, definisanje paketa ili podataka kliknite na Izmeni:
+                      </Text>
+                    </View>
+
                     <TouchableOpacity
-                      style={styles.calendarQuickBtn}
-                      onPress={() => handleOpenCalendarForFirm(f)}
+                      style={styles.editBtn}
+                      onPress={() => handleEditFirm(f)}
                       activeOpacity={0.8}
                     >
-                      <Calendar size={13} color="#7C3AED" style={{ marginRight: 4 }} />
-                      <Text style={styles.calendarQuickBtnText}>Promeni datum DO</Text>
+                      <Edit3 size={14} color="#FFFFFF" style={{ marginRight: 6 }} />
+                      <Text style={styles.editBtnText}>Izmeni servis</Text>
                     </TouchableOpacity>
-
-                    <View style={styles.firmActions}>
-                      <TouchableOpacity
-                        style={styles.quickExtendBtn}
-                        onPress={() => handleExtendLicense(f.id, 1)}
-                        activeOpacity={0.8}
-                      >
-                        <CalendarPlus size={13} color="#FFFFFF" style={{ marginRight: 4 }} />
-                        <Text style={styles.quickExtendText}>+30 dana</Text>
-                      </TouchableOpacity>
-
-                      <TouchableOpacity
-                        style={[styles.quickExtendBtn, { backgroundColor: '#7C3AED' }]}
-                        onPress={() => handleExtendLicense(f.id, 12)}
-                        activeOpacity={0.8}
-                      >
-                        <CalendarPlus size={13} color="#FFFFFF" style={{ marginRight: 4 }} />
-                        <Text style={styles.quickExtendText}>+1 godina</Text>
-                      </TouchableOpacity>
-
-                      <TouchableOpacity
-                        style={styles.editBtn}
-                        onPress={() => handleEditFirm(f)}
-                        activeOpacity={0.8}
-                      >
-                        <Edit3 size={13} color="#334155" style={{ marginRight: 4 }} />
-                        <Text style={styles.editBtnText}>Izmeni</Text>
-                      </TouchableOpacity>
-                    </View>
                   </View>
                 </View>
               );
@@ -653,28 +570,20 @@ export default function SuperAdminScreen({ onOpenDispatcher }) {
         </View>
       </ScrollView>
 
-      {/* MODAL: KALENDAR ZA IZBOR DATUMA ISTEKA LICENCE */}
-      <CalendarModal
-        visible={calendarVisible}
-        initialDate={calendarInitialDate}
-        onSelect={handleDateSelected}
-        onClose={() => setCalendarVisible(false)}
-      />
-
-      {/* MODAL: DODAVANJE / IZMENA FIRME */}
+      {/* MODAL: DODAVANJE / IZMENA FIRME SA INLINE KALENDAROM */}
       <Modal visible={showFirmModal} animationType="slide" transparent>
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>
-                {editingFirm ? `Izmena firme: ${editingFirm.naziv}` : 'Registracija novog servisa / firme'}
+                {editingFirm ? `Izmena servisa: ${editingFirm.naziv}` : 'Registracija novog servisa / firme'}
               </Text>
               <TouchableOpacity onPress={() => setShowFirmModal(false)}>
                 <X size={20} color="#64748B" />
               </TouchableOpacity>
             </View>
 
-            <ScrollView style={{ maxHeight: 480 }} contentContainerStyle={{ paddingVertical: 10, gap: 10 }}>
+            <ScrollView style={{ maxHeight: 520 }} contentContainerStyle={{ paddingVertical: 10, gap: 10 }}>
               <Text style={styles.inputLabel}>Naziv servisa / preduzeća *</Text>
               <TextInput
                 style={styles.input}
@@ -806,21 +715,33 @@ export default function SuperAdminScreen({ onOpenDispatcher }) {
                 ))}
               </View>
 
-              {/* Datum isteka licence sa kalendar dugmetom */}
-              <Text style={styles.inputLabel}>Datum isteka licence (DO)</Text>
-              <TouchableOpacity
-                style={styles.datePickerInputBox}
-                onPress={handleOpenCalendarForForm}
-                activeOpacity={0.8}
-              >
-                <Calendar size={18} color="#7C3AED" style={{ marginRight: 8 }} />
-                <Text style={styles.datePickerInputText}>
-                  {firmForm.datum_isteka || 'Izaberite datum iz kalendara'}
-                </Text>
-                <View style={styles.openCalBadge}>
-                  <Text style={styles.openCalBadgeText}>📅 Otvori kalendar</Text>
+              {/* Definisanje datuma važenja licence sa INLINE kalendarom */}
+              <View style={{ marginTop: 8 }}>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                  <Text style={styles.inputLabel}>Datum važenja licence DO (Kalendar):</Text>
+                  <View style={styles.activeDateBadge}>
+                    <Calendar size={13} color="#7C3AED" style={{ marginRight: 4 }} />
+                    <Text style={styles.activeDateBadgeText}>{firmForm.datum_isteka || 'Nije izabran'}</Text>
+                  </View>
                 </View>
-              </TouchableOpacity>
+
+                {/* Inline kalendar integrisan direktno u formu */}
+                <InlineCalendarPicker
+                  value={firmForm.datum_isteka}
+                  onChange={(newDate) => setFirmForm({ ...firmForm, datum_isteka: newDate })}
+                />
+
+                {/* Opciono ručni unos za brzo kucanje ako zatreba */}
+                <View style={{ marginTop: 6, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                  <Text style={{ fontSize: 11, color: '#64748B' }}>Ručni unos (GGGG-MM-DD):</Text>
+                  <TextInput
+                    style={[styles.input, { flex: 1, paddingVertical: 4, paddingHorizontal: 8, fontSize: 12 }]}
+                    value={firmForm.datum_isteka}
+                    placeholder="2027-12-31"
+                    onChangeText={(t) => setFirmForm({ ...firmForm, datum_isteka: t })}
+                  />
+                </View>
+              </View>
             </ScrollView>
 
             <View style={styles.modalFooter}>
@@ -1160,7 +1081,7 @@ const styles = StyleSheet.create({
     marginTop: 3
   },
 
-  // Donji red sa akcijama na kartici servisa
+  // Donji red sa akcijom
   firmCardBottom: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -1171,52 +1092,22 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     gap: 8
   },
-  calendarQuickBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#FAF5FF',
-    borderWidth: 1,
-    borderColor: '#E9D5FF',
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 6
-  },
-  calendarQuickBtnText: {
+  firmBottomHint: {
     fontSize: 11.5,
-    fontWeight: '700',
-    color: '#7C3AED'
-  },
-  firmActions: {
-    flexDirection: 'row',
-    gap: 6
-  },
-  quickExtendBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: colors.success,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 6
-  },
-  quickExtendText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#FFFFFF'
+    color: '#64748B'
   },
   editBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#F1F5F9',
-    borderWidth: 1,
-    borderColor: '#CBD5E1',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 6
+    backgroundColor: '#7C3AED',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 8
   },
   editBtnText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#334155'
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#FFFFFF'
   },
 
   // Modal za unos / izmenu
@@ -1343,37 +1234,128 @@ const styles = StyleSheet.create({
     color: '#FFFFFF'
   },
 
-  // Date picker input box
-  datePickerInputBox: {
+  // Active date badge
+  activeDateBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: '#F8FAFC',
-    borderWidth: 1,
-    borderColor: '#7C3AED',
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    marginTop: 2
-  },
-  datePickerInputText: {
-    flex: 1,
-    fontSize: 13,
-    fontWeight: '800',
-    color: '#0F172A'
-  },
-  openCalBadge: {
     backgroundColor: '#FAF5FF',
     paddingHorizontal: 8,
-    paddingVertical: 4,
+    paddingVertical: 3,
     borderRadius: 6,
     borderWidth: 1,
     borderColor: '#E9D5FF'
   },
-  openCalBadgeText: {
+  activeDateBadgeText: {
+    fontSize: 11.5,
+    fontWeight: '800',
+    color: '#7C3AED'
+  },
+
+  // INLINE KALENDAR STILOVI
+  inlineCalContainer: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 12,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    marginTop: 4
+  },
+  inlineCalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingBottom: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E2E8F0'
+  },
+  inlineCalNavBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    justifyContent: 'center',
+    alignItems: 'center'
+  },
+  inlineCalMonthTitle: {
+    fontSize: 14,
+    fontWeight: '900',
+    color: '#0F172A'
+  },
+  inlineCalMonthSub: {
+    fontSize: 10,
+    color: '#64748B',
+    marginTop: 1
+  },
+  inlineCalWeekdaysRow: {
+    flexDirection: 'row',
+    marginTop: 8,
+    marginBottom: 4
+  },
+  inlineCalWeekdayText: {
+    flex: 1,
+    textAlign: 'center',
+    fontSize: 10.5,
+    fontWeight: '800',
+    color: '#64748B'
+  },
+  inlineCalGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap'
+  },
+  inlineCalCell: {
+    width: `${100 / 7}%`,
+    height: 34,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderRadius: 6,
+    marginVertical: 1
+  },
+  inlineCalCellToday: {
+    borderWidth: 1.5,
+    borderColor: '#7C3AED'
+  },
+  inlineCalCellTextToday: {
+    color: '#7C3AED',
+    fontWeight: '800'
+  },
+  inlineCalCellSelected: {
+    backgroundColor: '#7C3AED'
+  },
+  inlineCalCellTextSelected: {
+    color: '#FFFFFF',
+    fontWeight: '900'
+  },
+  inlineCalCellText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#1E293B'
+  },
+  inlineCalShortcutsLabel: {
+    fontSize: 10.5,
+    fontWeight: '800',
+    color: '#475569',
+    marginTop: 10,
+    marginBottom: 5
+  },
+  inlineCalShortcutsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6
+  },
+  inlineCalShortcutBtn: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    borderRadius: 6
+  },
+  inlineCalShortcutText: {
     fontSize: 11,
     fontWeight: '700',
-    color: '#7C3AED'
+    color: '#334155'
   },
 
   modalFooter: {
@@ -1406,151 +1388,5 @@ const styles = StyleSheet.create({
     fontSize: 12.5,
     fontWeight: '800',
     color: '#FFFFFF'
-  },
-
-  // KALENDAR MODAL STILOVI
-  calendarOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(15, 23, 42, 0.7)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 16
-  },
-  calendarModalBox: {
-    width: '100%',
-    maxWidth: 420,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    padding: 16,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.25,
-    shadowRadius: 20,
-    elevation: 10
-  },
-  calendarHeaderRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingBottom: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F1F5F9'
-  },
-  calNavBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: '#F1F5F9',
-    justifyContent: 'center',
-    alignItems: 'center'
-  },
-  calMonthText: {
-    fontSize: 15,
-    fontWeight: '900',
-    color: '#0F172A'
-  },
-  calHelpSub: {
-    fontSize: 10.5,
-    color: '#64748B',
-    marginTop: 2
-  },
-  calWeekdaysRow: {
-    flexDirection: 'row',
-    marginTop: 10,
-    marginBottom: 6
-  },
-  calWeekdayText: {
-    flex: 1,
-    textAlign: 'center',
-    fontSize: 11,
-    fontWeight: '800',
-    color: '#64748B'
-  },
-  calGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap'
-  },
-  calDayCell: {
-    width: `${100 / 7}%`,
-    height: 38,
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderRadius: 8,
-    marginVertical: 2
-  },
-  calDayToday: {
-    borderWidth: 1.5,
-    borderColor: '#7C3AED'
-  },
-  calDayTodayText: {
-    color: '#7C3AED',
-    fontWeight: '800'
-  },
-  calDaySelected: {
-    backgroundColor: '#7C3AED'
-  },
-  calDaySelectedText: {
-    color: '#FFFFFF',
-    fontWeight: '900'
-  },
-  calDayText: {
-    fontSize: 12.5,
-    fontWeight: '600',
-    color: '#1E293B'
-  },
-  calPresetsLabel: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: '#64748B',
-    marginTop: 12,
-    marginBottom: 6
-  },
-  calPresetsRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 6
-  },
-  calPresetBtn: {
-    backgroundColor: '#F1F5F9',
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    paddingHorizontal: 8,
-    paddingVertical: 5,
-    borderRadius: 6
-  },
-  calPresetBtnText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#334155'
-  },
-  calFooter: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginTop: 14,
-    paddingTop: 10,
-    borderTopWidth: 1,
-    borderTopColor: '#F1F5F9'
-  },
-  calSelectedInfoLabel: {
-    fontSize: 10,
-    color: '#64748B',
-    fontWeight: '700'
-  },
-  calSelectedInfoValue: {
-    fontSize: 13,
-    fontWeight: '900',
-    color: '#7C3AED'
-  },
-  calCloseBtn: {
-    backgroundColor: '#7C3AED',
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 8
-  },
-  calCloseBtnText: {
-    color: '#FFFFFF',
-    fontSize: 12.5,
-    fontWeight: '800'
   }
 });
