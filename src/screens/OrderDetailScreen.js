@@ -424,13 +424,6 @@ export default function OrderDetailScreen({ orderId, onBack }) {
             <Text style={styles.faultDesc}>{order.opis_kvara}</Text>
           </View>
         ) : null}
-
-        {order.razlog_odlaganja ? (
-          <View style={[styles.faultNotice, { backgroundColor: '#FEE2E2', borderColor: '#FECACA' }]}>
-            <Text style={[styles.faultTitle, { color: '#DC2626' }]}>Razlog odlaganja:</Text>
-            <Text style={[styles.faultDesc, { color: '#991B1B' }]}>{order.razlog_odlaganja}</Text>
-          </View>
-        ) : null}
       </View>
 
       {/* Parts and Labor Items Section */}
