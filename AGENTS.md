@@ -26,3 +26,12 @@ Svaka nova dorada, funkcionalnost ili ispravka u aplikaciji mora biti verifikova
 ## 4. Dual-Platform Parity & 100% Besplatna Rešenja
 - Sve funkcionalnosti moraju raditi i na Web pretraživačima i u Native Android aplikaciji.
 - Nema plaćenih API servisa – koriste se OpenStreetMap, Leaflet, OSRM i sopstveni MySQL/PHP backend.
+
+## 5. Obavezna Desktop & Mobile Android (Orijentaciono-Prilagodljiva) Optimizacija (STRIKTNO I OBAVEZNO)
+Svaki ekran, pregled i funkcionalnost u aplikaciji mora biti nativno i besprekorno optimizovan za:
+1. **Desktop / Laptop i Horizontalni prikaz na telefonu (Landscape / širina > visina):**
+   - Koristi se moderan Split Screen (podeljeni prikaz 50:50 gde je mapa sa leve strane, a nalozi i radne forme sa desne strane).
+2. **Android telefon Uspravno (Portrait / visina >= širina):**
+   - Koristi se optimizovan vertikalni raspored za rad jednom rukom na terenu (mapa gore sa kompaktnom visinom, a nalozi i forme skrolabilno ispod).
+3. **Automatska adaptacija pri rotaciji telefona:**
+   - Čim majstor zarotira telefon u ruci, raspored se automatski i u deliću sekunde prilagođava između 50:50 podeljenog prikaza i vertikalnog rasporeda, a Leaflet/OSM mape automatski osvežavaju kontejner (`invalidateSize`) bez ikakvih deformacija ili sivih površina.

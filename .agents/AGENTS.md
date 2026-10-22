@@ -1,0 +1,38 @@
+# Pravila i instrukcije za rad na projektu MajstorNalog
+
+## 1. GitHub & cPanel Web Deployment Pravilo (STRIKTNO I OBAVEZNO)
+Svaka nova dorada, funkcionalnost ili ispravka u aplikaciji mora biti verifikovana i **odmah podignuta na GitHub** kako bi korisnik mogao da povuče izmene na cPanel hosting i testira sve na webu:
+1. **Verifikacija i kompajliranje Web bundle-a:**
+   `cmd /c npm run build:web`
+2. **Sinhronizacija web distribucije u koren repozitorijuma:**
+   Ukloniti stare web bundle fajlove iz `_expo/static/js/web/*.js` i iskopirati sveže fajlove iz `dist/*` u koren repozitorijuma (`_expo/`, `index.html`, `metadata.json`) - automatizovano kroz `node scripts/sync-web.js`.
+3. **Commit i Push na GitHub (`origin master` i `origin master:main`):**
+   `git add -A`
+   `git commit -m "..."`
+   `git -c http.sslVerify=false push origin master`
+   `git -c http.sslVerify=false push origin master:main`
+
+## 2. Server & Baza Podataka (Live cPanel - bookmymusic.rs)
+- **Domen / Putanja:** `https://bookmymusic.rs/majstornalog/`
+- **Baza:** `bookmymurs_majstornalog`
+- **Korisnik baze:** `bookmymurs_ilija`
+- **Lozinka baze:** `Stefan5656!`
+- **Endpoint:** `https://bookmymusic.rs/majstornalog/api.php`
+
+## 3. Zabrana automatskog pravljenja Android Build-a (STRIKTNO)
+- **NIKADA ne pokretati EAS build (`eas build`, `npx eas-cli build`) automatski.**
+- Sve izmene se uvek prvo puštaju na GitHub i cPanel za web testiranje.
+- Tek kada korisnik pregleda i testira na webu, i eksplicitno zatraži ("napravi build"), sme se pokrenuti EAS build.
+
+## 4. Dual-Platform Parity & 100% Besplatna Rešenja
+- Sve funkcionalnosti moraju raditi i na Web pretraživačima i u Native Android aplikaciji.
+- Nema plaćenih API servisa – koriste se OpenStreetMap, Leaflet, OSRM i sopstveni MySQL/PHP backend.
+
+## 5. Obavezna Desktop & Mobile Android (Orijentaciono-Prilagodljiva) Optimizacija (STRIKTNO I OBAVEZNO)
+Svaki ekran, pregled i funkcionalnost u aplikaciji mora biti nativno i besprekorno optimizovan za:
+1. **Desktop / Laptop i Horizontalni prikaz na telefonu (Landscape / širina > visina):**
+   - Koristi se moderan Split Screen (podeljeni prikaz 50:50 gde je mapa sa leve strane, a nalozi i radne forme sa desne strane).
+2. **Android telefon Uspravno (Portrait / visina >= širina):**
+   - Koristi se optimizovan vertikalni raspored za rad jednom rukom na terenu (mapa gore sa kompaktnom visinom, a nalozi i forme skrolabilno ispod).
+3. **Automatska adaptacija pri rotaciji telefona:**
+   - Čim majstor zarotira telefon u ruci, raspored se automatski i u deliću sekunde prilagođava između 50:50 podeljenog prikaza i vertikalnog rasporeda, a Leaflet/OSM mape automatski osvežavaju kontejner (`invalidateSize`) bez ikakvih deformacija ili sivih površina.
