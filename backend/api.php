@@ -121,6 +121,31 @@ try {
             ('EkoLift Održavanje Liftova', '105544332', '20443322', 'Kolarska 50', 'Smederevo', '026-600-700', 'office@ekolift-sd.rs', 'STANDARD', 'ISTEKAO', DATE_SUB(CURDATE(), INTERVAL 5 DAY))
         ");
     }
+
+    // 6. Tabela istorije licenci
+    $conn->exec("
+        CREATE TABLE IF NOT EXISTS `licence_istorija` (
+          `id` int(11) NOT NULL AUTO_INCREMENT,
+          `firma_id` int(11) NOT NULL,
+          `prethodni_datum` date DEFAULT NULL,
+          `novi_datum` date NOT NULL,
+          `paket` varchar(50) DEFAULT NULL,
+          `razlog` varchar(255) DEFAULT 'Ažuriranje licence',
+          `kreiran_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          PRIMARY KEY (`id`),
+          KEY `idx_licence_firma` (`firma_id`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    ");
+
+    // 7. Automatsko usklađivanje: ako je datum_isteka < CURDATE(), status automatski postaje ISTEKAO
+    $conn->exec("
+        UPDATE firme 
+        SET status_pretplate = 'ISTEKAO' 
+        WHERE datum_isteka IS NOT NULL 
+          AND datum_isteka < CURDATE() 
+          AND status_pretplate != 'ISTEKAO'
+    ");
+    $conn->exec("UPDATE firme SET status_pretplate = 'ISTEKAO' WHERE status_pretplate = 'BLOKIRAN'");
 } catch (Exception $migErr) {
     // Tiho ignoriši ako kolone već postoje
 }
@@ -162,6 +187,18 @@ if ($action === 'login') {
     $user = $stmt->fetch();
 
     if ($user && ($password === 'majstor123' || $password === 'admin123' || password_verify($password, $user['lozinka']))) {
+        // Pravilo: Ako korisnik nije superadmin, servis mora imati važeću licencu
+        if ($user['rola'] !== 'superadmin') {
+            $isExpired = ($user['status_pretplate'] === 'ISTEKAO') || (!empty($user['datum_isteka']) && $user['datum_isteka'] < date('Y-m-d'));
+            if ($isExpired) {
+                // Automatski ažuriraj status firme na ISTEKAO u bazi
+                $conn->prepare("UPDATE firme SET status_pretplate = 'ISTEKAO' WHERE id = ?")->execute([$user['firma_id']]);
+
+                $expFormatted = !empty($user['datum_isteka']) ? date('d.m.Y', strtotime($user['datum_isteka'])) : 'N/A';
+                sendResponse('error', "Licenca za Vaš servis je istekla ({$expFormatted}). Pristup aplikaciji je blokiran. Molimo kontaktirajte administratora za obnovu licence.", 403);
+            }
+        }
+
         unset($user['lozinka']);
         sendResponse('success', [
             "token" => bin2hex(random_bytes(24)),
@@ -505,32 +542,43 @@ elseif ($action === 'get_dispatcher_dashboard') {
 // 9. SUPERADMIN: DASHBOARD (GET_SUPERADMIN_DASHBOARD)
 // ==========================================================
 elseif ($action === 'get_superadmin_dashboard') {
-    // 1. Statistika platforme
+    // 1. Automatsko usklađivanje isteklih licenci
+    $conn->exec("
+        UPDATE firme 
+        SET status_pretplate = 'ISTEKAO' 
+        WHERE datum_isteka IS NOT NULL 
+          AND datum_isteka < CURDATE() 
+          AND status_pretplate != 'ISTEKAO'
+    ");
+    $conn->exec("UPDATE firme SET status_pretplate = 'ISTEKAO' WHERE status_pretplate = 'BLOKIRAN'");
+
+    // 2. Statistika platforme
     $totalFirme = $conn->query("SELECT COUNT(*) FROM firme")->fetchColumn();
     $activeFirme = $conn->query("SELECT COUNT(*) FROM firme WHERE status_pretplate = 'AKTIVAN'")->fetchColumn();
     $probniFirme = $conn->query("SELECT COUNT(*) FROM firme WHERE status_pretplate = 'PROBNI'")->fetchColumn();
-    $istekleFirme = $conn->query("SELECT COUNT(*) FROM firme WHERE status_pretplate = 'ISTEKAO' OR (datum_isteka IS NOT NULL AND datum_isteka < CURDATE())")->fetchColumn();
+    $istekleFirme = $conn->query("SELECT COUNT(*) FROM firme WHERE status_pretplate = 'ISTEKAO'")->fetchColumn();
     $totalMajstori = $conn->query("SELECT COUNT(*) FROM korisnici WHERE rola = 'majstor' AND aktivan = 1")->fetchColumn();
     $totalNalozi = $conn->query("SELECT COUNT(*) FROM radni_nalozi")->fetchColumn();
 
-    // 2. Sve firme sa brojem majstora i naloga
+    // 3. Sve firme sa tačnim brojem majstora, brojem naloga od 01. u mesecu i maksimalnim limitima iz paketa
     $stmtFirme = $conn->query("
         SELECT f.*,
-               COUNT(DISTINCT k.id) as broj_radnika,
-               COUNT(DISTINCT rn.id) as broj_naloga,
+               (SELECT COUNT(*) FROM korisnici WHERE firma_id = f.id AND rola = 'majstor' AND aktivan = 1) as broj_majstora,
+               (SELECT COUNT(*) FROM korisnici WHERE firma_id = f.id AND aktivan = 1) as broj_radnika,
+               (SELECT COUNT(*) FROM radni_nalozi WHERE firma_id = f.id AND kreiran_at >= DATE_FORMAT(CURDATE(), '%Y-%m-01 00:00:00')) as broj_naloga_mesec,
+               (SELECT COUNT(*) FROM radni_nalozi WHERE firma_id = f.id) as broj_naloga_ukupno,
                p.naziv as paket_naziv,
                p.cena_mesecno as paket_cena,
+               COALESCE(p.max_majstora, 5) as max_majstora,
+               COALESCE(p.max_naloga_mesecno, 500) as max_naloga_mesecno,
                DATEDIFF(f.datum_isteka, CURDATE()) as preostalo_dana
         FROM firme f
-        LEFT JOIN korisnici k ON f.id = k.firma_id AND k.aktivan = 1
-        LEFT JOIN radni_nalozi rn ON f.id = rn.firma_id
         LEFT JOIN paketi p ON f.paket = p.kod
-        GROUP BY f.id
         ORDER BY f.id ASC
     ");
     $firme = $stmtFirme->fetchAll();
 
-    // 3. Svi SaaS paketi
+    // 4. Svi SaaS paketi
     $stmtPaketi = $conn->query("SELECT * FROM paketi ORDER BY cena_mesecno ASC");
     $paketi = $stmtPaketi->fetchAll();
 
@@ -568,21 +616,58 @@ elseif ($action === 'save_firm') {
         sendResponse('error', 'Naziv firme je obavezan.', 400);
     }
 
+    // Automatsko pravilo: ako je datum isteka manji od današnjeg, status je ISTEKAO
+    if (!empty($datum_isteka) && $datum_isteka < date('Y-m-d')) {
+        $status_pretplate = 'ISTEKAO';
+    } elseif ($status_pretplate === 'ISTEKAO' && !empty($datum_isteka) && $datum_isteka >= date('Y-m-d')) {
+        $status_pretplate = 'AKTIVAN';
+    }
+    if ($status_pretplate === 'BLOKIRAN') {
+        $status_pretplate = 'ISTEKAO';
+    }
+
     if ($firm_id > 0) {
+        $prev = $conn->prepare("SELECT datum_isteka, paket FROM firme WHERE id = ?");
+        $prev->execute([$firm_id]);
+        $oldRow = $prev->fetch();
+
         $stmt = $conn->prepare("
             UPDATE firme 
             SET naziv = ?, pib = ?, maticni_broj = ?, grad = ?, adresa = ?, telefon = ?, email = ?, paket = ?, status_pretplate = ?, datum_isteka = ?
             WHERE id = ?
         ");
         $stmt->execute([$naziv, $pib, $maticni_broj, $grad, $adresa, $telefon, $email, $paket, $status_pretplate, $datum_isteka, $firm_id]);
-        sendResponse('success', ["id" => $firm_id, "poruka" => "Podaci firme su uspešno ažurirani."]);
+
+        try {
+            $stmtHist = $conn->prepare("
+                INSERT INTO licence_istorija (firma_id, prethodni_datum, novi_datum, paket, razlog)
+                VALUES (?, ?, ?, ?, 'Izmena podataka firme / paketa')
+            ");
+            $stmtHist->execute([$firm_id, $oldRow ? $oldRow['datum_isteka'] : null, $datum_isteka, $paket]);
+        } catch (Exception $e) {}
+
+        sendResponse('success', ["id" => $firm_id, "poruka" => "Podaci firme i paketa su uspešno sačuvani."]);
     } else {
+        $finalExp = $datum_isteka ?: date('Y-m-d', strtotime('+30 days'));
+        if ($finalExp < date('Y-m-d')) {
+            $status_pretplate = 'ISTEKAO';
+        }
+
         $stmt = $conn->prepare("
             INSERT INTO firme (naziv, pib, maticni_broj, grad, adresa, telefon, email, paket, status_pretplate, datum_isteka)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ");
-        $stmt->execute([$naziv, $pib, $maticni_broj, $grad, $adresa, $telefon, $email, $paket, $status_pretplate, $datum_isteka ?: date('Y-m-d', strtotime('+30 days'))]);
+        $stmt->execute([$naziv, $pib, $maticni_broj, $grad, $adresa, $telefon, $email, $paket, $status_pretplate, $finalExp]);
         $newId = $conn->lastInsertId();
+
+        try {
+            $stmtHist = $conn->prepare("
+                INSERT INTO licence_istorija (firma_id, prethodni_datum, novi_datum, paket, razlog)
+                VALUES (?, NULL, ?, ?, 'Kreiranje novog servisa')
+            ");
+            $stmtHist->execute([$newId, $finalExp, $paket]);
+        } catch (Exception $e) {}
+
         sendResponse('success', ["id" => $newId, "poruka" => "Nova firma je uspešno kreirana."]);
     }
 }
@@ -606,9 +691,17 @@ elseif ($action === 'extend_firm_license') {
     ");
     $stmt->execute([$meseci, $firm_id]);
 
-    $newExp = $conn->prepare("SELECT datum_isteka, status_pretplate FROM firme WHERE id = ?");
+    $newExp = $conn->prepare("SELECT datum_isteka, status_pretplate, paket FROM firme WHERE id = ?");
     $newExp->execute([$firm_id]);
     $updated = $newExp->fetch();
+
+    try {
+        $stmtHist = $conn->prepare("
+            INSERT INTO licence_istorija (firma_id, prethodni_datum, novi_datum, paket, razlog)
+            VALUES (?, NULL, ?, ?, ?)
+        ");
+        $stmtHist->execute([$firm_id, $updated['datum_isteka'], $updated['paket'], "Produženje licence za {$meseci} meseci"]);
+    } catch (Exception $e) {}
 
     sendResponse('success', [
         "firm_id" => $firm_id,

@@ -220,6 +220,21 @@ CREATE TABLE IF NOT EXISTS `status_istorija` (
   KEY `idx_nalog_istorija` (`nalog_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- --------------------------------------------------------
+-- 10. Tabela: licence_istorija (Dnevnik promena i produženja licenci servisa)
+-- --------------------------------------------------------
+CREATE TABLE IF NOT EXISTS `licence_istorija` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `firma_id` int(11) NOT NULL,
+  `prethodni_datum` date DEFAULT NULL,
+  `novi_datum` date NOT NULL,
+  `paket` varchar(50) DEFAULT NULL,
+  `razlog` varchar(255) DEFAULT 'Ažuriranje licence',
+  `kreiran_at` timestamp NOT NULL DEFAULT current_timestamp(),
+  PRIMARY KEY (`id`),
+  KEY `idx_licence_firma` (`firma_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- ==========================================================
 -- TEST PODACI ZA RAZVOJ (SaaS Paketi, Firme, Korisnici)
 -- ==========================================================
