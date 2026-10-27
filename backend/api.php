@@ -1079,8 +1079,9 @@ elseif ($action === 'delete_user') {
     if (!$u) {
         sendResponse('error', 'Korisnik nije pronađen.', 404);
     }
-    if ($u['rola_id'] == 1 || $u['rola'] === 'superadmin' || $u['email'] === 'admin@majstornalog.rs') {
-        sendResponse('error', 'Nije dozvoljeno brisanje glavnog SuperAdmin naloga.', 400);
+    // Zastita primarnog SuperAdmin naloga
+    if ($u['id'] == 4 || $u['email'] === 'ilija.arezina@gmail.com' || $u['email'] === 'admin@majstornalog.rs') {
+        sendResponse('error', 'Nije dozvoljeno brisanje primarnog SuperAdmin naloga.', 400);
     }
 
     // Obrisi lokaciju i reference radnika
