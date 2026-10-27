@@ -26,6 +26,8 @@ const getMapHtml = (data) => `
     var connectLine = null;
     var pinPickerInit = false;
 
+    var isPinPickerCurrent = false;
+
     map.on('moveend', function() {
       var center = map.getCenter();
       if (window.ReactNativeWebView) {
@@ -33,7 +35,17 @@ const getMapHtml = (data) => `
       }
     });
 
+    map.on('click', function(e) {
+      if (isPinPickerCurrent) {
+        map.panTo(e.latlng);
+        if (window.ReactNativeWebView) {
+          window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'PIN_MOVE_END', lat: e.latlng.lat, lng: e.latlng.lng }));
+        }
+      }
+    });
+
     function renderLayers(payload) {
+      isPinPickerCurrent = Boolean(payload.isPinPickerMode);
       Object.values(markers).forEach(function(m) { map.removeLayer(m); });
       markers = {};
       if (routeLine) { map.removeLayer(routeLine); routeLine = null; }

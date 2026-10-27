@@ -21,6 +21,13 @@ export default function MapComponent({
   const geofenceCircleRef = useRef(null);
   const connectLineRef = useRef(null);
   const pinPickerInitRef = useRef(false);
+  const onPinCoordsChangeRef = useRef(onPinCoordsChange);
+  const isPinPickerModeRef = useRef(isPinPickerMode);
+
+  useEffect(() => {
+    onPinCoordsChangeRef.current = onPinCoordsChange;
+    isPinPickerModeRef.current = isPinPickerMode;
+  }, [onPinCoordsChange, isPinPickerMode]);
 
   useEffect(() => {
     // Inject Leaflet CSS & JS if not already loaded
@@ -52,16 +59,24 @@ export default function MapComponent({
 
       // Listener for moving map in Pin Picker mode
       map.on('move', () => {
-        if (mapInstanceRef.current && onPinCoordsChange) {
+        if (mapInstanceRef.current && onPinCoordsChangeRef.current && isPinPickerModeRef.current) {
           const center = map.getCenter();
-          onPinCoordsChange({ lat: center.lat, lng: center.lng, isMoving: true });
+          onPinCoordsChangeRef.current({ lat: center.lat, lng: center.lng, isMoving: true });
         }
       });
 
       map.on('moveend', () => {
-        if (mapInstanceRef.current && onPinCoordsChange) {
+        if (mapInstanceRef.current && onPinCoordsChangeRef.current && isPinPickerModeRef.current) {
           const center = map.getCenter();
-          onPinCoordsChange({ lat: center.lat, lng: center.lng, isMoving: false });
+          onPinCoordsChangeRef.current({ lat: center.lat, lng: center.lng, isMoving: false });
+        }
+      });
+
+      // Klik na mapu u Pin Picker režimu: odmah centrira mapu na kliknutu tačku i pokreće geokodiranje
+      map.on('click', (e) => {
+        if (mapInstanceRef.current && onPinCoordsChangeRef.current && isPinPickerModeRef.current) {
+          map.panTo(e.latlng);
+          onPinCoordsChangeRef.current({ lat: e.latlng.lat, lng: e.latlng.lng, isMoving: false });
         }
       });
 

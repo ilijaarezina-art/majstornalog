@@ -238,5 +238,11 @@ export const api = {
       method: 'POST',
       body: userData
     });
+  },
+
+  reverseGeocode: async (lat, lng) => {
+    return request('reverse_geocode', {
+      query: `lat=${encodeURIComponent(lat)}&lng=${encodeURIComponent(lng)}`
+    });
   }
 };

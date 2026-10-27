@@ -1371,6 +1371,186 @@ elseif ($action === 'register') {
     ]);
 }
 
+// ==========================================================
+// 18. REVERZNO GEOKODIRANJE I PRETRAGA ADRESA (SERVER-SIDE PROXY)
+// Pouzdan pristup OpenStreetMap / Nominatim podacima sa punim User-Agent-om,
+// bez CORS blokada, sa podrškom za sve gradove u Srbiji (Požarevac, Smederevo, Kovin, Beograd...)
+// ==========================================================
+elseif ($action === 'reverse_geocode') {
+    $lat = isset($_GET['lat']) ? floatval($_GET['lat']) : (isset($inputData['lat']) ? floatval($inputData['lat']) : 0);
+    $lng = isset($_GET['lng']) ? floatval($_GET['lng']) : (isset($inputData['lng']) ? floatval($inputData['lng']) : 0);
+
+    if (!$lat || !$lng) {
+        sendResponse('error', 'Koordinate lat i lng su obavezne za geokodiranje.', 400);
+    }
+
+    // Pomoćna funkcija za transliteraciju ćirilice u latinicu
+    $cyrToLatFn = function($text) {
+        if (!$text) return '';
+        $map = [
+            'а'=>'a','б'=>'b','в'=>'v','г'=>'g','д'=>'d','ђе'=>'đ','đ'=>'đ',
+            'е'=>'e','ж'=>'ž','з'=>'z','и'=>'i','ј'=>'j','к'=>'k','л'=>'l',
+            'љ'=>'lj','м'=>'m','н'=>'n','њ'=>'nj','о'=>'o','п'=>'p','р'=>'r',
+            'с'=>'s','т'=>'t','ћ'=>'ć','у'=>'u','ф'=>'f','х'=>'h','ц'=>'c',
+            'ч'=>'č','џ'=>'dž','ш'=>'š',
+            'А'=>'A','Б'=>'B','В'=>'V','Г'=>'G','Д'=>'D','Ђ'=>'Đ',
+            'Е'=>'E','Ж'=>'Ž','З'=>'Z','И'=>'I','Ј'=>'J','К'=>'K','Л'=>'L',
+            'Љ'=>'Lj','М'=>'M','Н'=>'N','Њ'=>'Nj','О'=>'O','П'=>'P','Р'=>'R',
+            'С'=>'S','Т'=>'T','Ћ'=>'Ć','У'=>'U','Ф'=>'F','Х'=>'H','Ц'=>'C',
+            'Ч'=>'Č','Џ'=>'Dž','Ш'=>'Š'
+        ];
+        return strtr($text, $map);
+    };
+
+    // 1. Primarni poziv: Nominatim sa srpskim jezikom (latinica)
+    $url = "https://nominatim.openstreetmap.org/reverse?lat={$lat}&lon={$lng}&format=json&addressdetails=1&accept-language=sr-Latn,sr,en";
+    $ch = curl_init($url);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_USERAGENT, 'MajstorNalogApp/1.0 (kontakt@majstornalog.rs)');
+    curl_setopt($ch, CURLOPT_TIMEOUT, 5);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    $resp = curl_exec($ch);
+    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+
+    $nomData = ($resp && $httpCode === 200) ? json_decode($resp, true) : null;
+
+    $street = '';
+    $houseNumber = '';
+    $city = '';
+    $displayName = '';
+
+    if ($nomData && isset($nomData['address'])) {
+        $a = $nomData['address'];
+        $street = $a['road'] ?? $a['street'] ?? $a['pedestrian'] ?? $a['footway'] ?? $a['path'] ?? $a['suburb'] ?? '';
+        $houseNumber = $a['house_number'] ?? '';
+        $city = $a['city'] ?? $a['town'] ?? $a['village'] ?? $a['suburb'] ?? $a['municipality'] ?? $a['county'] ?? '';
+        $displayName = $nomData['display_name'] ?? '';
+    }
+
+    // 2. Fallback: Photon API ako Nominatim nije uspeo
+    if (!$street && !$city) {
+        $pUrl = "https://photon.komoot.io/reverse?lat={$lat}&lon={$lng}";
+        $ch2 = curl_init($pUrl);
+        curl_setopt($ch2, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch2, CURLOPT_TIMEOUT, 4);
+        curl_setopt($ch2, CURLOPT_SSL_VERIFYPEER, false);
+        $pResp = curl_exec($ch2);
+        curl_close($ch2);
+
+        $pData = $pResp ? json_decode($pResp, true) : null;
+        if ($pData && !empty($pData['features'])) {
+            $props = $pData['features'][0]['properties'] ?? [];
+            $street = $props['street'] ?? $props['name'] ?? '';
+            $houseNumber = $props['housenumber'] ?? '';
+            $city = $props['city'] ?? $props['town'] ?? $props['village'] ?? $props['county'] ?? '';
+        }
+    }
+
+    $street = trim($cyrToLatFn($street));
+    $houseNumber = trim($cyrToLatFn($houseNumber));
+    $city = trim($cyrToLatFn($city));
+    $displayName = trim($cyrToLatFn($displayName));
+
+    // Čišćenje prefiksa gradova i opština
+    $city = preg_replace('/^Grad\s+/iu', '', $city);
+    $city = preg_replace('/^Gradska\s+opština\s+/iu', '', $city);
+    $city = preg_replace('/\s+upravni\s+okrug/iu', '', $city);
+    $city = trim($city);
+
+    $primaryLabel = $street;
+    if ($street && $houseNumber) {
+        $primaryLabel = "{$street} {$houseNumber}";
+    }
+
+    $fullAddress = $primaryLabel;
+    if ($fullAddress && $city) {
+        $fullAddress .= ", {$city}";
+    } elseif ($city) {
+        $fullAddress = $city;
+    } elseif (!$fullAddress) {
+        $fullAddress = $displayName ?: "Lokacija ({$lat}, {$lng})";
+    }
+
+    // Formiranje liste kandidata sa te tačke i obližnjih kućnih brojeva
+    $candidates = [];
+    $seen = [];
+
+    if ($primaryLabel) {
+        $candidates[] = [
+            'id' => 'exact-pin',
+            'street' => $primaryLabel,
+            'city' => $city,
+            'address' => $city ? "{$primaryLabel}, {$city}" : $primaryLabel,
+            'lat' => $lat,
+            'lng' => $lng,
+            'isExact' => true
+        ];
+        $seen[mb_strtolower("{$primaryLabel}, {$city}")] = true;
+    }
+
+    // Ako imamo ulicu i grad, pretraži ostale kućne brojeve u toj ulici radi lakšeg izbora
+    if ($street && $city) {
+        $sUrl = "https://nominatim.openstreetmap.org/search?street=" . urlencode($street) . "&city=" . urlencode($city) . "&countrycodes=rs&format=json&addressdetails=1&limit=6&accept-language=sr-Latn,sr,en";
+        $ch3 = curl_init($sUrl);
+        curl_setopt($ch3, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch3, CURLOPT_USERAGENT, 'MajstorNalogApp/1.0 (kontakt@majstornalog.rs)');
+        curl_setopt($ch3, CURLOPT_TIMEOUT, 3);
+        curl_setopt($ch3, CURLOPT_SSL_VERIFYPEER, false);
+        $sResp = curl_exec($ch3);
+        curl_close($ch3);
+
+        $sData = $sResp ? json_decode($sResp, true) : null;
+        if (is_array($sData)) {
+            foreach ($sData as $sItem) {
+                $sAddr = $sItem['address'] ?? [];
+                $sNum = trim($cyrToLatFn($sAddr['house_number'] ?? ''));
+                if ($sNum) {
+                    $cStreet = "{$street} {$sNum}";
+                    $cKey = mb_strtolower("{$cStreet}, {$city}");
+                    if (!isset($seen[$cKey])) {
+                        $seen[$cKey] = true;
+                        $cLat = floatval($sItem['lat']);
+                        $cLng = floatval($sItem['lon']);
+                        $candidates[] = [
+                            'id' => 'nom-' . ($sItem['osm_id'] ?? rand(1000, 9999)),
+                            'street' => $cStreet,
+                            'city' => $city,
+                            'address' => "{$cStreet}, {$city}",
+                            'lat' => $cLat,
+                            'lng' => $cLng,
+                            'isExact' => false
+                        ];
+                    }
+                }
+            }
+        }
+    }
+
+    if (empty($candidates)) {
+        $lbl = $primaryLabel ?: ($displayName ?: 'Odabrana lokacija na mapi');
+        $candidates[] = [
+            'id' => 'fallback-exact',
+            'street' => $lbl,
+            'city' => $city,
+            'address' => $city ? "{$lbl}, {$city}" : $lbl,
+            'lat' => $lat,
+            'lng' => $lng,
+            'isExact' => true
+        ];
+    }
+
+    sendResponse('success', [
+        'address' => $fullAddress,
+        'street' => $primaryLabel ?: ($street ?: 'Odabrana lokacija'),
+        'houseNumber' => $houseNumber,
+        'city' => $city,
+        'lat' => $lat,
+        'lng' => $lng,
+        'candidates' => $candidates
+    ]);
+}
+
 else {
     sendResponse('error', 'Nepoznata akcija ili akcija nije prosleđena.', 404);
 }

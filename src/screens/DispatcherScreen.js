@@ -252,6 +252,8 @@ export default function DispatcherScreen({ onBackToWorker, onSelectOrder }) {
   const [nearbyCandidates, setNearbyCandidates] = useState([]);
   const [selectedCandidate, setSelectedCandidate] = useState(null);
   const [isSearchingNearby, setIsSearchingNearby] = useState(false);
+  const pinPickerReqIdRef = useRef(0);
+  const pinPickerDebounceRef = useRef(null);
 
   // Pokušaj preuzimanja tačne GPS lokacije ulogovanog korisnika preko pregledača
   useEffect(() => {
@@ -281,7 +283,7 @@ export default function DispatcherScreen({ onBackToWorker, onSelectOrder }) {
     klijent_ime: '',
     telefon: '',
     adresa: '',
-    grad: 'Smederevo',
+    grad: '',
     gpsX: null,
     gpsY: null,
     tip_intervencije: 'REDOVAN_SERVIS',
@@ -354,7 +356,7 @@ export default function DispatcherScreen({ onBackToWorker, onSelectOrder }) {
       klijent_ime: '',
       telefon: '',
       adresa: '',
-      grad: 'Smederevo',
+      grad: '',
       gpsX: null,
       gpsY: null,
       tip_intervencije: 'REDOVAN_SERVIS',
@@ -384,7 +386,7 @@ export default function DispatcherScreen({ onBackToWorker, onSelectOrder }) {
     setIsSearchingAddress(true);
     debounceTimerRef.current = setTimeout(async () => {
       try {
-        const results = await searchAddressSuggestions(text, orderForm.grad || 'Smederevo');
+        const results = await searchAddressSuggestions(text, orderForm.grad || '');
         setAddressSuggestions(results || []);
       } catch (e) {
         setAddressSuggestions([]);
@@ -399,7 +401,7 @@ export default function DispatcherScreen({ onBackToWorker, onSelectOrder }) {
     setOrderForm(p => ({
       ...p,
       adresa: item.street || item.address,
-      grad: item.city || p.grad || 'Smederevo',
+      grad: item.city || p.grad || '',
       gpsX: item.lat,
       gpsY: item.lng
     }));
@@ -417,12 +419,15 @@ export default function DispatcherScreen({ onBackToWorker, onSelectOrder }) {
     setSelectedCandidate(null);
     setShowPinPickerModal(true);
 
+    const reqId = ++pinPickerReqIdRef.current;
     getNearbyAddresses(initLat, initLng).then(list => {
-      setNearbyCandidates(list || []);
-      if (list && list.length > 0) {
-        setSelectedCandidate(list[0]);
+      if (pinPickerReqIdRef.current === reqId) {
+        setNearbyCandidates(list || []);
+        if (list && list.length > 0) {
+          setSelectedCandidate(list[0]);
+        }
+        setIsSearchingNearby(false);
       }
-      setIsSearchingNearby(false);
     });
   };
 
@@ -431,15 +436,24 @@ export default function DispatcherScreen({ onBackToWorker, onSelectOrder }) {
     setPinPickerCoords({ lat, lng });
     setPinPickerMoving(isMoving);
 
+    if (pinPickerDebounceRef.current) {
+      clearTimeout(pinPickerDebounceRef.current);
+    }
+
     if (!isMoving) {
       setIsSearchingNearby(true);
-      getNearbyAddresses(lat, lng).then(list => {
-        setNearbyCandidates(list || []);
-        if (list && list.length > 0) {
-          setSelectedCandidate(list[0]);
-        }
-        setIsSearchingNearby(false);
-      });
+      const reqId = ++pinPickerReqIdRef.current;
+      pinPickerDebounceRef.current = setTimeout(() => {
+        getNearbyAddresses(lat, lng).then(list => {
+          if (pinPickerReqIdRef.current === reqId) {
+            setNearbyCandidates(list || []);
+            if (list && list.length > 0) {
+              setSelectedCandidate(list[0]);
+            }
+            setIsSearchingNearby(false);
+          }
+        });
+      }, 300);
     }
   };
 
@@ -449,7 +463,7 @@ export default function DispatcherScreen({ onBackToWorker, onSelectOrder }) {
       setOrderForm(p => ({
         ...p,
         adresa: selectedCandidate.street,
-        grad: selectedCandidate.city || 'Smederevo',
+        grad: selectedCandidate.city || p.grad || '',
         gpsX: selectedCandidate.lat || pinPickerCoords.lat,
         gpsY: selectedCandidate.lng || pinPickerCoords.lng
       }));
@@ -524,7 +538,7 @@ export default function DispatcherScreen({ onBackToWorker, onSelectOrder }) {
 
       if (!finalGpsX || !finalGpsY) {
         try {
-          const autoFound = await searchAddressSuggestions(orderForm.adresa.trim(), orderForm.grad.trim() || 'Smederevo');
+          const autoFound = await searchAddressSuggestions(orderForm.adresa.trim(), orderForm.grad.trim());
           if (autoFound && autoFound.length > 0) {
             finalGpsX = autoFound[0].lat;
             finalGpsY = autoFound[0].lng;
@@ -1094,7 +1108,7 @@ export default function DispatcherScreen({ onBackToWorker, onSelectOrder }) {
                     style={styles.input}
                     value={orderForm.grad}
                     onChangeText={(t) => setOrderForm(p => ({ ...p, grad: t }))}
-                    placeholder="Smederevo"
+                    placeholder="npr. Požarevac, Smederevo"
                     placeholderTextColor="#94A3B8"
                   />
                 </View>
@@ -1355,7 +1369,7 @@ export default function DispatcherScreen({ onBackToWorker, onSelectOrder }) {
               <ScrollView style={{ maxHeight: 150, marginTop: 6 }}>
                 {nearbyCandidates.length === 0 && !isSearchingNearby ? (
                   <Text style={{ fontSize: 12, color: '#64748B', paddingVertical: 8 }}>
-                    Pomerite čiodu na mapi do željene ulice i zgrade.
+                    Pomerite čiodu ili kliknite na mapu do željene ulice i objekta.
                   </Text>
                 ) : (
                   nearbyCandidates.map((cand, idx) => {
@@ -1375,7 +1389,7 @@ export default function DispatcherScreen({ onBackToWorker, onSelectOrder }) {
                             {cand.street}
                           </Text>
                           <Text style={styles.candCityText}>
-                            {cand.city} {cand.isExact ? '• (Tačna lokacija pod čiodom)' : ''}
+                            {cand.city ? `${cand.city} ` : ''}{cand.isExact ? '• (Tačna lokacija pod čiodom)' : ''}
                           </Text>
                         </View>
                         {isSel && <Check size={16} color="#0284C7" />}
@@ -1405,7 +1419,7 @@ export default function DispatcherScreen({ onBackToWorker, onSelectOrder }) {
                 >
                   <Check size={16} color="#FFFFFF" style={{ marginRight: 6 }} />
                   <Text style={styles.pinPickerConfirmBtnText}>
-                    {selectedCandidate ? `Upis u nalog: ${selectedCandidate.street}` : 'Postavi odabranu adresu'}
+                    {selectedCandidate ? `Potvrdi: ${selectedCandidate.street}${selectedCandidate.city ? ', ' + selectedCandidate.city : ''}` : 'Potvrdi odabranu adresu'}
                   </Text>
                 </TouchableOpacity>
               </View>
