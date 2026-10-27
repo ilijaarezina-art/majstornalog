@@ -94,6 +94,18 @@ try {
     if (!in_array('razlog_odlaganja', $cols)) {
         $conn->exec("ALTER TABLE radni_nalozi ADD COLUMN `razlog_odlaganja` text DEFAULT NULL AFTER `trajanje_minuta`");
     }
+    if (!in_array('start_gpsX', $cols)) {
+        $conn->exec("ALTER TABLE radni_nalozi ADD COLUMN `start_gpsX` double DEFAULT NULL AFTER `gpsY`");
+    }
+    if (!in_array('start_gpsY', $cols)) {
+        $conn->exec("ALTER TABLE radni_nalozi ADD COLUMN `start_gpsY` double DEFAULT NULL AFTER `start_gpsX`");
+    }
+    if (!in_array('start_udaljenost_m', $cols)) {
+        $conn->exec("ALTER TABLE radni_nalozi ADD COLUMN `start_udaljenost_m` int(11) DEFAULT NULL AFTER `start_gpsY`");
+    }
+    if (!in_array('start_u_opsegu', $cols)) {
+        $conn->exec("ALTER TABLE radni_nalozi ADD COLUMN `start_u_opsegu` tinyint(1) DEFAULT NULL AFTER `start_udaljenost_m`");
+    }
 
     // 3. Status enum proširenje u radni_nalozi
     $conn->exec("
@@ -300,6 +312,29 @@ elseif ($action === 'get_order_details') {
     sendResponse('success', $order);
 }
 
+// Pomoćna matematička funkcija za proračun geodetske razdaljine u metrima (Haversine formula)
+function calculateDistanceInMeters($lat1, $lon1, $lat2, $lon2) {
+    if ($lat1 === null || $lon1 === null || $lat2 === null || $lon2 === null) return null;
+    $lat1 = floatval($lat1);
+    $lon1 = floatval($lon1);
+    $lat2 = floatval($lat2);
+    $lon2 = floatval($lon2);
+    if ($lat1 == 0 || $lon1 == 0 || $lat2 == 0 || $lon2 == 0) return null;
+
+    $earthRadius = 6371000; // metri
+    $latFrom = deg2rad($lat1);
+    $lonFrom = deg2rad($lon1);
+    $latTo = deg2rad($lat2);
+    $lonTo = deg2rad($lon2);
+
+    $latDelta = $latTo - $latFrom;
+    $lonDelta = $lonTo - $lonFrom;
+
+    $angle = 2 * asin(sqrt(pow(sin($latDelta / 2), 2) +
+        cos($latFrom) * cos($latTo) * pow(sin($lonDelta / 2), 2)));
+    return intval(round($angle * $earthRadius));
+}
+
 // ==========================================================
 // 4. PROMENA STATUSA NALOGA (UPDATE_ORDER_STATUS)
 // ==========================================================
@@ -314,7 +349,12 @@ elseif ($action === 'update_order_status') {
         sendResponse('error', 'ID naloga i novi status su obavezni.', 400);
     }
 
-    $check = $conn->prepare("SELECT status FROM radni_nalozi WHERE id = ?");
+    $check = $conn->prepare("
+        SELECT rn.*, k.gpsX as klijent_gpsX, k.gpsY as klijent_gpsY 
+        FROM radni_nalozi rn 
+        LEFT JOIN klijenti k ON rn.klijent_id = k.id 
+        WHERE rn.id = ?
+    ");
     $check->execute([$order_id]);
     $curRow = $check->fetch();
     if (!$curRow) {
@@ -325,13 +365,39 @@ elseif ($action === 'update_order_status') {
     $extraSql = "";
     $params = [$novi_status];
 
-    // Automatsko evidentiranje vremena prema statusu
+    // Automatsko evidentiranje vremena i GPS verifikacije prema statusu
     if ($novi_status === 'PRIHVACENO') {
         $extraSql .= ", vreme_prihvatanja = COALESCE(vreme_prihvatanja, NOW())";
     } elseif ($novi_status === 'NA_PUTU') {
         $extraSql .= ", vreme_polaska = COALESCE(vreme_polaska, NOW())";
     } elseif ($novi_status === 'U_RADU') {
         $extraSql .= ", vreme_pocetka = COALESCE(vreme_pocetka, NOW())";
+
+        // Preuzimanje GPS koordinata majstora u momentu klika na početak rada
+        $startLat = isset($inputData['gpsX']) ? floatval($inputData['gpsX']) : (isset($inputData['lat']) ? floatval($inputData['lat']) : null);
+        $startLng = isset($inputData['gpsY']) ? floatval($inputData['gpsY']) : (isset($inputData['lng']) ? floatval($inputData['lng']) : null);
+
+        // Ciljne koordinate lokacije klijenta (dolazna stanica)
+        $clientLat = !empty($curRow['gpsX']) ? floatval($curRow['gpsX']) : (!empty($curRow['klijent_gpsX']) ? floatval($curRow['klijent_gpsX']) : null);
+        $clientLng = !empty($curRow['gpsY']) ? floatval($curRow['gpsY']) : (!empty($curRow['klijent_gpsY']) ? floatval($curRow['klijent_gpsY']) : null);
+
+        if ($startLat !== null && $startLng !== null && $clientLat !== null && $clientLng !== null) {
+            $distMeters = calculateDistanceInMeters($clientLat, $clientLng, $startLat, $startLng);
+            $inGeofence = ($distMeters !== null && $distMeters <= 50) ? 1 : 0;
+
+            $extraSql .= ", start_gpsX = ?, start_gpsY = ?, start_udaljenost_m = ?, start_u_opsegu = ?";
+            $params[] = $startLat;
+            $params[] = $startLng;
+            $params[] = $distMeters;
+            $params[] = $inGeofence;
+
+            $geoComment = "Početak rada: Udaljenost od klijenta {$distMeters}m (" . ($inGeofence ? "U OPSEGU <= 50m ✓" : "VAN OPSEGA > 50m ⚠️") . ")";
+            $komentar = $komentar ? ($komentar . " • " . $geoComment) : $geoComment;
+        } elseif ($startLat !== null && $startLng !== null) {
+            $extraSql .= ", start_gpsX = ?, start_gpsY = ?";
+            $params[] = $startLat;
+            $params[] = $startLng;
+        }
     } elseif ($novi_status === 'ODLOZENO') {
         $extraSql .= ", razlog_odlaganja = ?";
         $params[] = $razlog ?: $komentar;

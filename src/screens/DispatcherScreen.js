@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+﻿import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -108,9 +108,29 @@ export default function DispatcherScreen({ onBackToWorker }) {
           <View style={[styles.mapCol, isDesktop && { flex: 1.2 }]}>
             <View style={styles.mapCard}>
               <View style={styles.mapHeaderBar}>
-                <Text style={styles.mapHeaderTitle}>Karta terena uživo (Majstori i intervencije)</Text>
-                <Text style={styles.mapHeaderSub}>{workers.length} majstora • {orders.length} naloga danas</Text>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 6 }}>
+                  <View>
+                    <Text style={styles.mapHeaderTitle}>Karta terena uživo (Majstori i intervencije)</Text>
+                    <Text style={styles.mapHeaderSub}>{workers.length} majstora • {orders.length} naloga danas</Text>
+                  </View>
+                  {/* Legenda boja na mapi */}
+                  <View style={styles.mapLegendRow}>
+                    <View style={styles.legendItem}>
+                      <View style={[styles.legendDot, { backgroundColor: '#059669' }]} />
+                      <Text style={styles.legendText}>Završeno</Text>
+                    </View>
+                    <View style={styles.legendItem}>
+                      <View style={[styles.legendDot, { backgroundColor: '#0284C7' }]} />
+                      <Text style={styles.legendText}>U opsegu (50m)</Text>
+                    </View>
+                    <View style={styles.legendItem}>
+                      <View style={[styles.legendDot, { backgroundColor: '#DC2626' }]} />
+                      <Text style={styles.legendText}>Van opsega (&gt;50m)</Text>
+                    </View>
+                  </View>
+                </View>
               </View>
+
               <MapComponent
                 isDispatcher={true}
                 workers={workers}
@@ -129,7 +149,7 @@ export default function DispatcherScreen({ onBackToWorker }) {
             <View style={styles.sectionCard}>
               <View style={styles.sectionTitleRow}>
                 <Users size={16} color={colors.primary} style={{ marginRight: 6 }} />
-                <Text style={styles.sectionTitle}>Ekipe na terenu</Text>
+                <Text style={styles.sectionTitle}>Ekipe na terenu ({workers.length})</Text>
               </View>
 
               <View style={{ gap: 8, marginTop: 8 }}>
@@ -160,6 +180,9 @@ export default function DispatcherScreen({ onBackToWorker }) {
               <View style={{ gap: 10, marginTop: 10 }}>
                 {orders.map(o => {
                   const sb = getStatusBadge(o.status);
+                  const hasGeo = o.start_u_opsegu !== null && o.start_u_opsegu !== undefined;
+                  const inZone = Number(o.start_u_opsegu) === 1;
+
                   return (
                     <View key={o.id} style={styles.orderCardSmall}>
                       <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -171,6 +194,23 @@ export default function DispatcherScreen({ onBackToWorker }) {
                       {o.opis_kvara ? (
                         <Text style={styles.orderSmallFault} numberOfLines={2}>Kvar: {o.opis_kvara}</Text>
                       ) : null}
+
+                      {/* GPS Geofence status bedž */}
+                      {hasGeo && (
+                        <View style={[
+                          styles.geoBadge,
+                          inZone ? styles.geoBadgeIn : styles.geoBadgeOut
+                        ]}>
+                          <Text style={[
+                            styles.geoBadgeText,
+                            inZone ? styles.geoBadgeTextIn : styles.geoBadgeTextOut
+                          ]}>
+                            {inZone
+                              ? `✓ Start u opsegu (${o.start_udaljenost_m || 0}m)`
+                              : `⚠️ Start van opsega (${o.start_udaljenost_m || 0}m)`}
+                          </Text>
+                        </View>
+                      )}
                     </View>
                   );
                 })}
@@ -259,6 +299,27 @@ const styles = StyleSheet.create({
     fontSize: 11.5,
     color: '#64748B',
     marginTop: 2
+  },
+  mapLegendRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginTop: 2
+  },
+  legendItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4
+  },
+  legendDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4
+  },
+  legendText: {
+    fontSize: 10.5,
+    fontWeight: '700',
+    color: '#64748B'
   },
   listCol: {
     flex: 1
@@ -353,6 +414,33 @@ const styles = StyleSheet.create({
     color: '#64748B',
     marginTop: 4,
     fontStyle: 'italic'
+  },
+  geoBadge: {
+    alignSelf: 'flex-start',
+    marginTop: 6,
+    paddingVertical: 2.5,
+    paddingHorizontal: 7,
+    borderRadius: 6
+  },
+  geoBadgeIn: {
+    backgroundColor: '#EFF6FF',
+    borderWidth: 1,
+    borderColor: '#BAE6FD'
+  },
+  geoBadgeOut: {
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FECACA'
+  },
+  geoBadgeText: {
+    fontSize: 10.5,
+    fontWeight: '800'
+  },
+  geoBadgeTextIn: {
+    color: '#0369A1'
+  },
+  geoBadgeTextOut: {
+    color: '#DC2626'
   },
   centerWrap: {
     flex: 1,

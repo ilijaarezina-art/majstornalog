@@ -1,4 +1,4 @@
-# MajstorNalog (Field Service Management Platform)
+﻿# MajstorNalog (Field Service Management Platform)
 
 ## 1. Pregled sistema
 **MajstorNalog** je moderna, open-source B2B SaaS platforma namenjena zanatskim i servisnim preduzećima (klima uređaji, grejanje, liftovi, vodovod, elektroinstalacije, bela tehnika). 
@@ -69,7 +69,7 @@ Sistem digitalizuje kompletan ciklus terenskog poslovanja:
 
 ## 6. Faze realizacije
 - [x] **Faza 1: Baza podataka**: SQL shema sa multi-tenant tabelama i test podacima (`database_dump.sql`).
-- [ ] **Faza 2: Backend API**: PHP REST kontroler (`api.php`) sa autentifikacijom i CRUD akcijama za naloge, klijente i katalog.
-- [ ] **Faza 3: Mobilni ekran majstora**: Lista naloga za danas, navigacija, statusi rada, foto upload i digitalni potpis.
-- [ ] **Faza 4: Dispečerska tabla sa mapom**: Prikaz lokacija majstora i radnih zadataka u realnom vremenu.
+- [x] **Faza 2: Backend API**: PHP REST kontroler (`api.php`) sa autentifikacijom, CRUD akcijama, licencama i GPS geofence verifikacijom.
+- [x] **Faza 3: Mobilni ekran majstora**: Lista naloga za danas, navigacija, statusi rada, GPS verifikacija dolaska na lokaciju (50m opseg), radni delovi i digitalni potpis.
+- [x] **Faza 4: Dispečerska tabla sa mapom**: Prikaz lokacija majstora i radnih zadataka u realnom vremenu sa semaforskim statusima i geofence indikacijom.
 - [ ] **Faza 5: PDF Generator**: Automatsko kreiranje i slanje overenog radnog naloga.

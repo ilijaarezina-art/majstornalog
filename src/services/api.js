@@ -93,16 +93,23 @@ export const api = {
     });
   },
 
-  updateOrderStatus: async (orderId, status, workerId = null, comment = '', reason = '') => {
+  updateOrderStatus: async (orderId, status, workerId = null, comment = '', reason = '', coords = null) => {
+    const body = {
+      order_id: orderId,
+      status,
+      majstor_id: workerId,
+      komentar: comment,
+      razlog_odlaganja: reason
+    };
+    if (coords) {
+      body.lat = coords.latitude || coords.lat;
+      body.lng = coords.longitude || coords.lng;
+      body.gpsX = body.lat;
+      body.gpsY = body.lng;
+    }
     return request('update_order_status', {
       method: 'POST',
-      body: {
-        order_id: orderId,
-        status,
-        majstor_id: workerId,
-        komentar: comment,
-        razlog_odlaganja: reason
-      }
+      body
     });
   },
 

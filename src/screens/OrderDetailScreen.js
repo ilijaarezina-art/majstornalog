@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+﻿import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -104,10 +104,10 @@ export default function OrderDetailScreen({ orderId, onBack }) {
     }
   };
 
-  const handleUpdateStatus = async (newStatus, reason = '') => {
+  const handleUpdateStatus = async (newStatus, reason = '', coords = null) => {
     setStatusLoading(true);
     try {
-      await api.updateOrderStatus(orderId, newStatus, user.id, '', reason);
+      await api.updateOrderStatus(orderId, newStatus, user.id, '', reason, coords);
       await loadOrderDetails();
       if (newStatus === 'ODLOZENO') {
         setShowDelayModal(false);
@@ -117,6 +117,32 @@ export default function OrderDetailScreen({ orderId, onBack }) {
       Alert.alert('Greška', err.message || 'Neuspešna promena statusa.');
     } finally {
       setStatusLoading(false);
+    }
+  };
+
+  const handleStartWorkWithLocation = () => {
+    setStatusLoading(true);
+
+    const proceed = (coords) => {
+      handleUpdateStatus('U_RADU', '', coords);
+    };
+
+    if (typeof navigator !== 'undefined' && navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          proceed({
+            lat: pos.coords.latitude,
+            lng: pos.coords.longitude
+          });
+        },
+        (err) => {
+          console.warn('GPS lokacija nedostupna:', err.message);
+          proceed(null);
+        },
+        { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 }
+      );
+    } else {
+      proceed(null);
     }
   };
 
@@ -335,7 +361,7 @@ export default function OrderDetailScreen({ orderId, onBack }) {
           {order.status === 'NA_PUTU' && (
             <TouchableOpacity
               style={[styles.bigStepBtn, { backgroundColor: '#D97706' }]}
-              onPress={() => handleUpdateStatus('U_RADU')}
+              onPress={handleStartWorkWithLocation}
               disabled={statusLoading}
               activeOpacity={0.8}
             >
@@ -349,9 +375,35 @@ export default function OrderDetailScreen({ orderId, onBack }) {
           )}
 
           {order.status === 'U_RADU' && (
-            <View style={styles.workingNoticeBox}>
-              <Wrench size={16} color="#D97706" style={{ marginRight: 8 }} />
-              <Text style={styles.workingNoticeText}>Intervencija je u toku. Unesite delove, opis i preuzmite potpis na dnu.</Text>
+            <View style={[
+              styles.workingNoticeBox,
+              order.start_u_opsegu === 1
+                ? { backgroundColor: '#EFF6FF', borderColor: '#BAE6FD' }
+                : (order.start_u_opsegu === 0
+                    ? { backgroundColor: '#FFF7ED', borderColor: '#FED7AA' }
+                    : {})
+            ]}>
+              <Wrench
+                size={16}
+                color={order.start_u_opsegu === 1 ? '#0284C7' : (order.start_u_opsegu === 0 ? '#EA580C' : '#D97706')}
+                style={{ marginRight: 8 }}
+              />
+              <View style={{ flex: 1 }}>
+                <Text style={{
+                  fontSize: 12.5,
+                  fontWeight: '800',
+                  color: order.start_u_opsegu === 1 ? '#0369A1' : (order.start_u_opsegu === 0 ? '#C2410C' : '#92400E')
+                }}>
+                  {order.start_u_opsegu === 1
+                    ? `Dolazak verifikovan u opsegu (${order.start_udaljenost_m || 0}m od klijenta)`
+                    : (order.start_u_opsegu === 0
+                        ? `Upozorenje: Početak rada van opsega (${order.start_udaljenost_m || 0}m od klijenta)`
+                        : 'Intervencija je u toku')}
+                </Text>
+                <Text style={{ fontSize: 11, color: '#64748B', marginTop: 2 }}>
+                  Unesite delove, opis i preuzmite potpis klijenta na dnu.
+                </Text>
+              </View>
             </View>
           )}
 
@@ -701,6 +753,12 @@ export default function OrderDetailScreen({ orderId, onBack }) {
                   address: order.adresa
                 } : null}
                 workerLocation={{ lat: 44.6627, lng: 20.9300 }}
+                startLocation={order.start_gpsX && order.start_gpsY ? {
+                  lat: parseFloat(order.start_gpsX),
+                  lng: parseFloat(order.start_gpsY),
+                  inGeofence: Number(order.start_u_opsegu) === 1,
+                  distance: order.start_udaljenost_m || 0
+                } : null}
                 height={mapHeight}
               />
 
@@ -751,6 +809,12 @@ export default function OrderDetailScreen({ orderId, onBack }) {
                   address: order.adresa
                 }}
                 workerLocation={{ lat: 44.6627, lng: 20.9300 }}
+                startLocation={order.start_gpsX && order.start_gpsY ? {
+                  lat: parseFloat(order.start_gpsX),
+                  lng: parseFloat(order.start_gpsY),
+                  inGeofence: Number(order.start_u_opsegu) === 1,
+                  distance: order.start_udaljenost_m || 0
+                } : null}
                 height={220}
               />
             </View>
