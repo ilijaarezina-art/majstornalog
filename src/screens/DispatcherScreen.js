@@ -578,7 +578,10 @@ export default function DispatcherScreen({ onBackToWorker, onSelectOrder }) {
     }
   };
 
-  const getStatusBadge = (status) => {
+  const getStatusBadge = (orderOrStatus, item = null) => {
+    const status = typeof orderOrStatus === 'string' ? orderOrStatus : orderOrStatus?.status;
+    const orderObj = (typeof orderOrStatus === 'object' && orderOrStatus) ? orderOrStatus : item;
+
     switch (status) {
       case 'U_RADU':
         return { label: 'U RADU', color: colors.warning, bg: '#FEF3C7', text: '#B45309' };
@@ -586,8 +589,14 @@ export default function DispatcherScreen({ onBackToWorker, onSelectOrder }) {
         return { label: 'NA PUTU', color: colors.primary, bg: '#E0F2FE', text: '#0369A1' };
       case 'PRIHVACENO':
         return { label: 'PRIHVAĆENO', color: '#6366F1', bg: '#EEF2FF', text: '#4338CA' };
-      case 'ZAVRSENO':
-        return { label: 'ZAVRŠENO', color: colors.success, bg: '#ECFDF5', text: '#047857' };
+      case 'ZAVRSENO': {
+        const inGeofence = orderObj ? (Number(orderObj.start_u_opsegu) === 1) : true;
+        if (!inGeofence) {
+          // Nalog koji je završen, a nije krenuo sa radom u opsegu dolazne stanice: crvena pozadina
+          return { label: 'ZAVRŠENO', color: '#DC2626', bg: '#DC2626', text: '#FFFFFF', isOutOfRange: true };
+        }
+        return { label: 'ZAVRŠENO', color: colors.success, bg: '#ECFDF5', text: '#047857', isOutOfRange: false };
+      }
       case 'DODELJENO':
         return { label: 'DODELJENO', color: '#0284C7', bg: '#F0F9FF', text: '#0284C7' };
       case 'KREIRANO':
@@ -653,15 +662,15 @@ export default function DispatcherScreen({ onBackToWorker, onSelectOrder }) {
                   <View style={styles.mapLegendRow}>
                     <View style={styles.legendItem}>
                       <View style={[styles.legendDot, { backgroundColor: '#059669' }]} />
-                      <Text style={styles.legendText}>Završeno</Text>
+                      <Text style={styles.legendText}>Završeno (u opsegu)</Text>
+                    </View>
+                    <View style={styles.legendItem}>
+                      <View style={[styles.legendDot, { backgroundColor: '#DC2626' }]} />
+                      <Text style={styles.legendText}>Završeno (van opsega)</Text>
                     </View>
                     <View style={styles.legendItem}>
                       <View style={[styles.legendDot, { backgroundColor: '#0284C7' }]} />
                       <Text style={styles.legendText}>U opsegu (50m)</Text>
-                    </View>
-                    <View style={styles.legendItem}>
-                      <View style={[styles.legendDot, { backgroundColor: '#DC2626' }]} />
-                      <Text style={styles.legendText}>Van opsega (&gt;50m)</Text>
                     </View>
                   </View>
                 </View>
@@ -728,7 +737,7 @@ export default function DispatcherScreen({ onBackToWorker, onSelectOrder }) {
                   </View>
                 ) : (
                   fieldOrders.map(fo => {
-                    const sb = getStatusBadge(fo.status);
+                    const sb = getStatusBadge(fo.status, fo);
                     const isFocused = focusedOrder?.id === fo.id;
                     return (
                       <TouchableOpacity
@@ -879,7 +888,7 @@ export default function DispatcherScreen({ onBackToWorker, onSelectOrder }) {
                   </View>
                 ) : (
                   dateOrders.map(o => {
-                    const sb = getStatusBadge(o.status);
+                    const sb = getStatusBadge(o.status, o);
                     const hasWorker = Boolean(o.majstor_id && (o.majstor_ime || o.majstor_prezime));
                     const isFocused = focusedOrder?.id === o.id;
 
@@ -919,6 +928,16 @@ export default function DispatcherScreen({ onBackToWorker, onSelectOrder }) {
                             <Text style={styles.orderTimeText}>Zakazano za: {o.zakazano_za}</Text>
                           </View>
                         ) : null}
+
+                        {/* Upozorenje ako je nalog završen a nije krenuo sa radom u opsegu dolazne stanice */}
+                        {o.status === 'ZAVRSENO' && Number(o.start_u_opsegu) !== 1 && (
+                          <View style={styles.outOfRangePill}>
+                            <AlertTriangle size={11} color="#DC2626" style={{ marginRight: 4 }} />
+                            <Text style={styles.outOfRangeText}>
+                              ⚠️ Započeto van opsega dolazne stanice {o.start_udaljenost_m ? `(${o.start_udaljenost_m}m)` : ''}
+                            </Text>
+                          </View>
+                        )}
 
                         {/* 4. RED — OBAVEZNO NA KRAJU: DODELJENI RADNIK ILI NEDODELJEN SA NARANDŽASTOM POZADINOM */}
                         <View style={styles.workerAssignmentFooter}>
@@ -1653,6 +1672,23 @@ const styles = StyleSheet.create({
   statusBadgePillText: {
     fontSize: 10,
     fontWeight: '800'
+  },
+  outOfRangePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FECACA',
+    borderRadius: 6,
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    marginTop: 5,
+    alignSelf: 'flex-start'
+  },
+  outOfRangeText: {
+    fontSize: 10.5,
+    fontWeight: '700',
+    color: '#DC2626'
   },
   fieldOrderDetailsBox: {
     marginTop: 8,

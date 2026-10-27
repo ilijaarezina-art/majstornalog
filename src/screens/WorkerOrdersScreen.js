@@ -96,7 +96,7 @@ export default function WorkerOrdersScreen({ onSelectOrder, onOpenDispatcher }) 
   };
 
   // Standardizovana značka statusa sa bojom i ikonicom
-  const getStatusBadge = (status) => {
+  const getStatusBadge = (status, item = null) => {
     switch (status) {
       case 'DODELJENO':
         return {
@@ -143,7 +143,19 @@ export default function WorkerOrdersScreen({ onSelectOrder, onOpenDispatcher }) 
           border: '#FECACA',
           icon: AlertTriangle
         };
-      case 'ZAVRSENO':
+      case 'ZAVRSENO': {
+        const inGeofence = item ? (Number(item.start_u_opsegu) === 1) : true;
+        if (!inGeofence) {
+          // Završeno van opsega dolazne stanice -> crvena pozadina
+          return {
+            step: 5,
+            label: '5. ZAVRŠENO I OVERENO',
+            bg: '#DC2626',
+            color: '#FFFFFF',
+            border: '#B91C1C',
+            icon: CheckCircle
+          };
+        }
         return {
           step: 5,
           label: '5. ZAVRŠENO I OVERENO',
@@ -152,6 +164,7 @@ export default function WorkerOrdersScreen({ onSelectOrder, onOpenDispatcher }) 
           border: '#BCF0DA',
           icon: CheckCircle
         };
+      }
       default:
         return {
           step: 0,
@@ -169,7 +182,7 @@ export default function WorkerOrdersScreen({ onSelectOrder, onOpenDispatcher }) 
   const completedToday = orders.filter(o => o.status === 'ZAVRSENO').length;
 
   const renderOrderItem = ({ item }) => {
-    const sb = getStatusBadge(item.status);
+    const sb = getStatusBadge(item.status, item);
     const StatusIcon = sb.icon;
     const isUrgent = item.prioritet === 'HITNO';
     const isDone = item.status === 'ZAVRSENO';

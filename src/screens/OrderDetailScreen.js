@@ -488,11 +488,23 @@ export default function OrderDetailScreen({ orderId, onBack }) {
       {/* Mogućnost ponovnog otvaranja ako je nalog ZAVRŠEN */}
       {isDone && (
         <View style={styles.stepperActionBox}>
-          <View style={[styles.workingNoticeBox, { backgroundColor: '#DEF7EC', borderColor: '#BCF0DA' }]}>
-            <CheckCircle2 size={16} color={colors.success} style={{ marginRight: 8 }} />
+          <View style={[
+            styles.workingNoticeBox,
+            {
+              backgroundColor: Number(order.start_u_opsegu) === 1 ? '#DEF7EC' : '#FEE2E2',
+              borderColor: Number(order.start_u_opsegu) === 1 ? '#BCF0DA' : '#FECACA'
+            }
+          ]}>
+            <CheckCircle2 size={16} color={Number(order.start_u_opsegu) === 1 ? colors.success : '#DC2626'} style={{ marginRight: 8 }} />
             <View style={{ flex: 1 }}>
-              <Text style={{ fontSize: 12.5, fontWeight: '800', color: '#03543F' }}>Radni nalog je overen i završen</Text>
-              <Text style={{ fontSize: 11, color: '#046C4E', marginTop: 1 }}>Ukoliko je potrebno uneti izmene ili dopune, možete ponovo otvoriti nalog:</Text>
+              <Text style={{ fontSize: 12.5, fontWeight: '800', color: Number(order.start_u_opsegu) === 1 ? '#03543F' : '#991B1B' }}>
+                Radni nalog je overen i završen {Number(order.start_u_opsegu) === 1 ? '(U OPSEGU)' : '(⚠️ KRENUO VAN OPSEGA DOLAZNE STANICE)'}
+              </Text>
+              <Text style={{ fontSize: 11, color: Number(order.start_u_opsegu) === 1 ? '#046C4E' : '#B91C1C', marginTop: 1 }}>
+                {Number(order.start_u_opsegu) === 1
+                  ? 'Ukoliko je potrebno uneti izmene ili dopune, možete ponovo otvoriti nalog:'
+                  : `Majstor je započeo rad na udaljenosti od ${order.start_udaljenost_m || '>50'}m od dolazne stanice klijenta.`}
+              </Text>
             </View>
           </View>
 
@@ -817,9 +829,23 @@ export default function OrderDetailScreen({ orderId, onBack }) {
           <View style={{ marginLeft: 10 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center' }}>
               <Text style={[styles.headerTitle, isLandscape && !isDesktop && { fontSize: 15 }]}>{order.broj_naloga}</Text>
-              <View style={[styles.statusBadge, { backgroundColor: isDone ? '#DEF7EC' : '#E0F2FE' }]}>
-                <Text style={[styles.statusBadgeText, { color: isDone ? colors.success : colors.primary }]}>
-                  {order.status}
+              <View style={[
+                styles.statusBadge,
+                {
+                  backgroundColor: isDone
+                    ? (Number(order.start_u_opsegu) === 1 ? '#DEF7EC' : '#DC2626')
+                    : '#E0F2FE'
+                }
+              ]}>
+                <Text style={[
+                  styles.statusBadgeText,
+                  {
+                    color: isDone
+                      ? (Number(order.start_u_opsegu) === 1 ? colors.success : '#FFFFFF')
+                      : colors.primary
+                  }
+                ]}>
+                  {order.status === 'ZAVRSENO' ? 'ZAVRŠENO' : order.status}
                 </Text>
               </View>
             </View>
