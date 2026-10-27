@@ -56,7 +56,7 @@ CREATE TABLE IF NOT EXISTS `firme` (
 -- --------------------------------------------------------
 CREATE TABLE IF NOT EXISTS `korisnici` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
-  `firma_id` int(11) NOT NULL DEFAULT 1,
+  `firma_id` int(11) DEFAULT NULL,
   `ime` varchar(80) NOT NULL,
   `prezime` varchar(80) NOT NULL,
   `email` varchar(100) NOT NULL,
@@ -260,7 +260,7 @@ INSERT INTO `korisnici` (`id`, `firma_id`, `ime`, `prezime`, `email`, `telefon`,
 (1, 1, 'Marko', 'Jovanović', 'gazda@termoklima-sd.rs', '064-111-222', '$2y$10$abcdefghijklmnopqrstuv', 'vlasnik', '#2563EB', 1),
 (2, 1, 'Nikola', 'Petrović', 'nikola@termoklima-sd.rs', '063-222-333', '$2y$10$abcdefghijklmnopqrstuv', 'majstor', '#059669', 1),
 (3, 1, 'Milan', 'Đorđević', 'milan@termoklima-sd.rs', '065-333-444', '$2y$10$abcdefghijklmnopqrstuv', 'majstor', '#D97706', 1),
-(4, 1, 'Super', 'Administrator', 'admin@majstornalog.rs', '069-000-000', '$2y$10$abcdefghijklmnopqrstuv', 'superadmin', '#7C3AED', 1)
+(4, NULL, 'Super', 'Administrator', 'admin@majstornalog.rs', '069-000-000', '$2y$10$abcdefghijklmnopqrstuv', 'superadmin', '#7C3AED', 1)
 ON DUPLICATE KEY UPDATE `email` = VALUES(`email`), `rola` = VALUES(`rola`);
 
 INSERT INTO `klijenti` (`id`, `firma_id`, `tip`, `ime_prezime`, `telefon`, `adresa`, `sprat_stan`, `grad`, `gpsX`, `gpsY`, `napomena`) VALUES

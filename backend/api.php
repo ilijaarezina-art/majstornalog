@@ -113,13 +113,16 @@ try {
         MODIFY COLUMN `status` ENUM('KREIRANO','DODELJENO','PRIHVACENO','NA_PUTU','U_RADU','ODLOZENO','ZAVRSENO','STORNO') DEFAULT 'KREIRANO'
     ");
 
-    // 4. Proveri postojanje Superadmin korisnika
+    // 4. Obezbedi da Superadmin nalog ne pripada nijednoj firmi (firma_id = NULL)
+    $conn->exec("ALTER TABLE korisnici MODIFY COLUMN `firma_id` int(11) NULL DEFAULT NULL");
+    $conn->exec("UPDATE korisnici SET firma_id = NULL WHERE rola = 'superadmin'");
+
     $chkAdmin = $conn->query("SELECT COUNT(*) FROM korisnici WHERE rola = 'superadmin' OR email = 'admin@majstornalog.rs'")->fetchColumn();
     if ($chkAdmin == 0) {
         $dummyHash = '$2y$10$abcdefghijklmnopqrstuv';
         $stmtAdmin = $conn->prepare("
             INSERT INTO `korisnici` (`firma_id`, `ime`, `prezime`, `email`, `telefon`, `lozinka`, `rola`, `boja_markera`, `aktivan`) 
-            VALUES (1, 'Super', 'Administrator', 'admin@majstornalog.rs', '069-000-000', ?, 'superadmin', '#7C3AED', 1)
+            VALUES (NULL, 'Super', 'Administrator', 'admin@majstornalog.rs', '069-000-000', ?, 'superadmin', '#7C3AED', 1)
         ");
         $stmtAdmin->execute([$dummyHash]);
     }
@@ -237,6 +240,10 @@ if ($action === 'login') {
                 $expFormatted = !empty($user['datum_isteka']) ? date('d.m.Y', strtotime($user['datum_isteka'])) : 'N/A';
                 sendResponse('error', "Licenca za Vaš servis je istekla ({$expFormatted}). Pristup aplikaciji je blokiran. Molimo kontaktirajte administratora za obnovu licence.", 403);
             }
+        } else {
+            $user['firma_id'] = null;
+            $user['firma_naziv'] = 'SuperAdmin Platforma';
+            $user['status_pretplate'] = 'AKTIVAN';
         }
 
         unset($user['lozinka']);
@@ -813,13 +820,6 @@ elseif ($action === 'delete_firm') {
         sendResponse('error', 'Servis nije pronađen.', 404);
     }
 
-    // Zaštita: Proveri da li se superadmin nalog nalazi u ovom servisu
-    $chkAdmin = $conn->prepare("SELECT COUNT(*) FROM korisnici WHERE firma_id = ? AND rola = 'superadmin'");
-    $chkAdmin->execute([$firm_id]);
-    if ($chkAdmin->fetchColumn() > 0) {
-        sendResponse('error', 'Nije dozvoljeno brisanje primarnog servisa u kome se nalazi SuperAdmin nalog.', 400);
-    }
-
     try {
         $conn->beginTransaction();
 
@@ -852,7 +852,7 @@ elseif ($action === 'delete_firm') {
         $conn->prepare("DELETE FROM majstori_lokacija WHERE firma_id = ?")->execute([$firm_id]);
 
         // 7. Obriši korisnike ovog servisa
-        $conn->prepare("DELETE FROM korisnici WHERE firma_id = ?")->execute([$firm_id]);
+        $conn->prepare("DELETE FROM korisnici WHERE firma_id = ? AND rola != 'superadmin'")->execute([$firm_id]);
 
         // 8. Obriši istoriju licenci
         $conn->prepare("DELETE FROM licence_istorija WHERE firma_id = ?")->execute([$firm_id]);
