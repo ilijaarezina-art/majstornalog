@@ -398,18 +398,8 @@ export default function DispatcherScreen({ onBackToWorker, onSelectOrder }) {
 
               <View style={{ gap: 8, marginTop: 8 }}>
                 {workers.length === 0 ? (
-                  <View style={{ paddingVertical: 14, alignItems: 'center' }}>
+                  <View style={{ paddingVertical: 18, alignItems: 'center' }}>
                     <Text style={{ fontSize: 13, color: '#94A3B8' }}>Nema unetih radnika za ovaj servis.</Text>
-                    {(isAdmin || isOwner || isSuperAdmin) && (
-                      <TouchableOpacity
-                        style={[styles.addWorkerTopBtn, { marginTop: 10 }]}
-                        onPress={handleOpenAddWorker}
-                        activeOpacity={0.8}
-                      >
-                        <UserPlus size={13} color="#FFFFFF" style={{ marginRight: 4 }} />
-                        <Text style={styles.addWorkerTopBtnText}>Unesi prvog radnika</Text>
-                      </TouchableOpacity>
-                    )}
                   </View>
                 ) : (
                   workers.map(w => (
@@ -478,16 +468,6 @@ export default function DispatcherScreen({ onBackToWorker, onSelectOrder }) {
                 {orders.length === 0 ? (
                   <View style={{ paddingVertical: 18, alignItems: 'center' }}>
                     <Text style={{ fontSize: 13, color: '#94A3B8' }}>Nema radnih naloga za danas.</Text>
-                    {(isAdmin || isOwner || isSuperAdmin) && (
-                      <TouchableOpacity
-                        style={[styles.createOrderBtn, { marginTop: 10 }]}
-                        onPress={handleOpenCreateOrder}
-                        activeOpacity={0.8}
-                      >
-                        <Plus size={13} color="#FFFFFF" style={{ marginRight: 4 }} />
-                        <Text style={styles.createOrderBtnText}>Kreiraj prvi radni nalog</Text>
-                      </TouchableOpacity>
-                    )}
                   </View>
                 ) : (
                   orders.map(o => {
