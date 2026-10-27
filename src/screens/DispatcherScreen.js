@@ -38,7 +38,8 @@ import {
   Filter,
   UserCheck,
   UserX,
-  CalendarDays
+  CalendarDays,
+  ChevronDown
 } from 'lucide-react-native';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../services/api';
@@ -231,6 +232,7 @@ export default function DispatcherScreen({ onBackToWorker, onSelectOrder }) {
   const [showCreateOrderModal, setShowCreateOrderModal] = useState(false);
   const [creatingOrder, setCreatingOrder] = useState(false);
   const [orderError, setOrderError] = useState('');
+  const [isWorkerDropdownOpen, setIsWorkerDropdownOpen] = useState(false);
   const [orderForm, setOrderForm] = useState({
     klijent_ime: '',
     telefon: '',
@@ -299,6 +301,7 @@ export default function DispatcherScreen({ onBackToWorker, onSelectOrder }) {
   // Otvaranje forme za novi nalog
   const handleOpenCreateOrder = () => {
     setOrderError('');
+    setIsWorkerDropdownOpen(false);
     setOrderForm({
       klijent_ime: '',
       telefon: '',
@@ -822,51 +825,111 @@ export default function DispatcherScreen({ onBackToWorker, onSelectOrder }) {
                 </View>
               </View>
 
-              <Text style={styles.label}>Izbor radnika iz baze (može se odabrati, ali nije obavezno):</Text>
-              <View style={{ gap: 6, marginBottom: 12 }}>
-                {/* Opcija 1: Neraspoređen / Nedodeljen */}
-                <TouchableOpacity
-                  style={[
-                    styles.workerSelectCard,
-                    !orderForm.majstor_id && styles.workerSelectCardActiveOrange
-                  ]}
-                  onPress={() => setOrderForm(p => ({ ...p, majstor_id: '' }))}
-                  activeOpacity={0.8}
-                >
-                  <View style={{ flex: 1 }}>
-                    <Text style={[styles.workerSelectName, !orderForm.majstor_id && { color: '#C2410C' }]}>
-                      ⚠️ Bez dodele radnika (Nedodeljen)
-                    </Text>
-                    <Text style={styles.workerSelectSub}>Nalog će se kreirati sa statusom KREIRANO i oznakom Nedodeljen</Text>
-                  </View>
-                  {!orderForm.majstor_id && <Check size={16} color="#EA580C" />}
-                </TouchableOpacity>
-
-                {/* Opcija 2+: Ranije uneti radnici ovog servisa */}
-                {workers.map(w => {
-                  const isSel = String(orderForm.majstor_id) === String(w.id);
-                  return (
-                    <TouchableOpacity
-                      key={w.id}
-                      style={[
-                        styles.workerSelectCard,
-                        isSel && styles.workerSelectCardActive
-                      ]}
-                      onPress={() => setOrderForm(p => ({ ...p, majstor_id: String(w.id) }))}
-                      activeOpacity={0.8}
-                    >
-                      <View style={[styles.workerSelectDot, { backgroundColor: w.boja_markera || '#059669' }]} />
-                      <View style={{ flex: 1 }}>
-                        <Text style={[styles.workerSelectName, isSel && { color: '#0369A1' }]}>
-                          {w.ime} {w.prezime}
-                        </Text>
-                        <Text style={styles.workerSelectSub}>Tel: {w.telefon} • Status: {w.radni_status || 'SLOBODAN'}</Text>
+              <Text style={styles.label}>Izbor radnika (Padajući meni - opciono):</Text>
+              
+              {/* TRIGGER PADAJUĆEG MENIJA */}
+              <TouchableOpacity
+                style={[
+                  styles.dropdownTrigger,
+                  isWorkerDropdownOpen && styles.dropdownTriggerActive,
+                  !orderForm.majstor_id && { borderColor: '#FDBA74', backgroundColor: '#FFF7ED' }
+                ]}
+                onPress={() => setIsWorkerDropdownOpen(prev => !prev)}
+                activeOpacity={0.8}
+              >
+                {(() => {
+                  const selectedWorker = workers.find(w => String(w.id) === String(orderForm.majstor_id));
+                  if (selectedWorker) {
+                    return (
+                      <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
+                        <View style={[styles.workerSelectDot, { backgroundColor: selectedWorker.boja_markera || '#059669' }]} />
+                        <View style={{ flex: 1 }}>
+                          <Text style={[styles.workerSelectName, { color: '#0369A1' }]}>
+                            {selectedWorker.ime} {selectedWorker.prezime}
+                          </Text>
+                          <Text style={styles.workerSelectSub}>📞 {selectedWorker.telefon} • Status: {selectedWorker.radni_status || 'SLOBODAN'}</Text>
+                        </View>
                       </View>
-                      {isSel && <Check size={16} color="#0284C7" />}
-                    </TouchableOpacity>
+                    );
+                  }
+                  return (
+                    <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
+                      <AlertTriangle size={15} color="#EA580C" style={{ marginRight: 8 }} />
+                      <View style={{ flex: 1 }}>
+                        <Text style={[styles.workerSelectName, { color: '#C2410C' }]}>
+                          Bez dodele radnika (Nedodeljen)
+                        </Text>
+                        <Text style={styles.workerSelectSub}>Nalog će biti kreiran sa statusom KREIRANO i oznakom Nedodeljen</Text>
+                      </View>
+                    </View>
                   );
-                })}
-              </View>
+                })()}
+                <ChevronDown
+                  size={18}
+                  color="#64748B"
+                  style={{ transform: [{ rotate: isWorkerDropdownOpen ? '180deg' : '0deg' }] }}
+                />
+              </TouchableOpacity>
+
+              {/* OTVORENI PADAJUĆI MENI SA LISTOM SVIH RADNIKA */}
+              {isWorkerDropdownOpen && (
+                <View style={styles.dropdownMenu}>
+                  {/* Opcija 1: Neraspoređen / Nedodeljen */}
+                  <TouchableOpacity
+                    style={[
+                      styles.dropdownItem,
+                      !orderForm.majstor_id && styles.dropdownItemActiveOrange
+                    ]}
+                    onPress={() => {
+                      setOrderForm(p => ({ ...p, majstor_id: '' }));
+                      setIsWorkerDropdownOpen(false);
+                    }}
+                    activeOpacity={0.8}
+                  >
+                    <View style={{ flex: 1 }}>
+                      <Text style={[styles.workerSelectName, !orderForm.majstor_id && { color: '#C2410C' }]}>
+                        ⚠️ Bez dodele radnika (Nedodeljen)
+                      </Text>
+                      <Text style={styles.workerSelectSub}>Ostavite slobodno za naknadno dodeljivanje</Text>
+                    </View>
+                    {!orderForm.majstor_id && <Check size={16} color="#EA580C" />}
+                  </TouchableOpacity>
+
+                  {/* Opcija 2+: Svi ranije uneti radnici ovog servisa */}
+                  {workers.length === 0 ? (
+                    <View style={{ padding: 12, alignItems: 'center' }}>
+                      <Text style={{ fontSize: 12, color: '#64748B' }}>Nema unetih radnika za ovaj servis.</Text>
+                    </View>
+                  ) : (
+                    workers.map(w => {
+                      const isSel = String(orderForm.majstor_id) === String(w.id);
+                      return (
+                        <TouchableOpacity
+                          key={w.id}
+                          style={[
+                            styles.dropdownItem,
+                            isSel && styles.dropdownItemActive
+                          ]}
+                          onPress={() => {
+                            setOrderForm(p => ({ ...p, majstor_id: String(w.id) }));
+                            setIsWorkerDropdownOpen(false);
+                          }}
+                          activeOpacity={0.8}
+                        >
+                          <View style={[styles.workerSelectDot, { backgroundColor: w.boja_markera || '#059669' }]} />
+                          <View style={{ flex: 1 }}>
+                            <Text style={[styles.workerSelectName, isSel && { color: '#0369A1' }]}>
+                              {w.ime} {w.prezime}
+                            </Text>
+                            <Text style={styles.workerSelectSub}>📞 {w.telefon} • Status: {w.radni_status || 'SLOBODAN'}</Text>
+                          </View>
+                          {isSel && <Check size={16} color="#0284C7" />}
+                        </TouchableOpacity>
+                      );
+                    })
+                  )}
+                </View>
+              )}
             </ScrollView>
 
             <View style={styles.modalActions}>
@@ -1565,6 +1628,49 @@ const styles = StyleSheet.create({
     fontSize: 10.5,
     color: '#64748B',
     marginTop: 2
+  },
+  dropdownTrigger: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: 12,
+    borderRadius: 8,
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    marginBottom: 4
+  },
+  dropdownTriggerActive: {
+    borderColor: '#0284C7',
+    backgroundColor: '#F0F9FF'
+  },
+  dropdownMenu: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 8,
+    marginTop: 4,
+    marginBottom: 12,
+    maxHeight: 180,
+    overflow: 'hidden',
+    ...Platform.select({
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 4 },
+      android: { elevation: 3 },
+      web: { boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)' }
+    })
+  },
+  dropdownItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9'
+  },
+  dropdownItemActive: {
+    backgroundColor: '#F0F9FF'
+  },
+  dropdownItemActiveOrange: {
+    backgroundColor: '#FFF7ED'
   },
   modalActions: {
     flexDirection: 'row',

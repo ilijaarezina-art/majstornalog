@@ -201,6 +201,16 @@ try {
     $conn->exec("UPDATE korisnici SET rola_id = 2, rola = 'admin' WHERE rola IN ('vlasnik', 'admin')");
     $conn->exec("UPDATE korisnici SET rola_id = 3 WHERE rola_id IS NULL OR rola_id NOT IN (1, 2, 3)");
     $conn->exec("UPDATE korisnici SET lozinka_tekst = 'majstor123' WHERE lozinka_tekst IS NULL OR lozinka_tekst = ''");
+
+    // Proširenje tabele majstori_lokacija: poslednje_azuriranje ako nedostaje
+    $colsMl = $conn->query("SHOW COLUMNS FROM majstori_lokacija")->fetchAll(PDO::FETCH_COLUMN);
+    if (!in_array('poslednje_azuriranje', $colsMl)) {
+        if (in_array('poslednja_promena', $colsMl)) {
+            $conn->exec("ALTER TABLE majstori_lokacija CHANGE COLUMN `poslednja_promena` `poslednje_azuriranje` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp()");
+        } else {
+            $conn->exec("ALTER TABLE majstori_lokacija ADD COLUMN `poslednje_azuriranje` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp()");
+        }
+    }
 } catch (Exception $migErr) {
     // Tiho ignoriši ako kolone već postoje
 }
@@ -662,8 +672,8 @@ elseif ($action === 'create_order') {
 
     // 6. Upis u status_istorija
     $logStmt = $conn->prepare("
-        INSERT INTO status_istorija (nalog_id, prethodni_status, novi_status, promenio_id, komentar, vreme_promene)
-        VALUES (?, NULL, ?, ?, 'Kreiran novi radni nalog preko dispečerskog centra', NOW())
+        INSERT INTO status_istorija (nalog_id, prethodni_status, novi_status, promenio_id, komentar)
+        VALUES (?, NULL, ?, ?, 'Kreiran novi radni nalog preko dispečerskog centra')
     ");
     $logStmt->execute([$newOrderId, $status, $kreirao_id]);
 
@@ -749,13 +759,13 @@ elseif ($action === 'get_dispatcher_dashboard') {
         SELECT k.id, k.ime, k.prezime, k.telefon, k.email, k.lozinka_tekst, k.boja_markera,
                COALESCE(ml.gpsX, 44.6655) as gpsX,
                COALESCE(ml.gpsY, 20.9290) as gpsY,
-               ml.brzina, ml.kurs,
+               COALESCE(ml.brzina, 0) as brzina,
+               COALESCE(ml.kurs, 0) as kurs,
                COALESCE(ml.status, 'SLOBODAN') as radni_status,
-               ml.poslednje_azuriranje, ml.trenutni_nalog_id
+               ml.trenutni_nalog_id
         FROM korisnici k
         LEFT JOIN majstori_lokacija ml ON k.id = ml.majstor_id
-        LEFT JOIN firme f ON k.firma_id = f.id
-        WHERE k.firma_id = ? AND (k.rola = 'majstor' OR k.rola = 'radnik' OR (k.rola_id = 3 AND k.firma_id IS NOT NULL)) AND k.aktivan = 1
+        WHERE k.firma_id = ? AND (k.rola = 'majstor' OR k.rola = 'radnik' OR (k.rola_id IN (2, 3) AND k.firma_id IS NOT NULL)) AND k.aktivan = 1
         ORDER BY k.id ASC
     ");
     $stmtWorkers->execute([$firma_id]);
