@@ -39,7 +39,8 @@ import {
   UserCheck,
   UserX,
   CalendarDays,
-  ChevronDown
+  ChevronDown,
+  Trash2
 } from 'lucide-react-native';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../services/api';
@@ -247,7 +248,7 @@ export default function DispatcherScreen({ onBackToWorker, onSelectOrder }) {
   // Pin picker modal (definisanje dolazne lokacije klijenta čiodom na mapi)
   const [showPinPickerModal, setShowPinPickerModal] = useState(false);
   const [pinPickerCoords, setPinPickerCoords] = useState({ lat: 44.6627, lng: 20.9300 });
-  const [pinPickerAddress, setPinPickerAddress] = useState('');
+  const [pinPickerResult, setPinPickerResult] = useState(null);
   const [pinPickerMoving, setPinPickerMoving] = useState(false);
 
   // Pokušaj preuzimanja tačne GPS lokacije ulogovanog korisnika preko pregledača
@@ -408,53 +409,89 @@ export default function DispatcherScreen({ onBackToWorker, onSelectOrder }) {
     const initLat = orderForm.gpsX || myLocation.lat || 44.6627;
     const initLng = orderForm.gpsY || myLocation.lng || 20.9300;
     setPinPickerCoords({ lat: initLat, lng: initLng });
-    setPinPickerAddress(orderForm.adresa || 'Određivanje adrese...');
+    setPinPickerResult({
+      street: orderForm.adresa || '',
+      city: orderForm.grad || 'Smederevo',
+      lat: initLat,
+      lng: initLng
+    });
+    setPinPickerMoving(false);
     setShowPinPickerModal(true);
 
     reverseGeocode(initLat, initLng).then(res => {
-      if (res && res.address) {
-        setPinPickerAddress(res.address);
+      if (res) {
+        setPinPickerResult(res);
       }
     });
   };
 
-  // Pomeranje mape u Pin Picker režimu
+  // Pomeranje mape u Pin Picker režimu (pronalazi tačnu ulicu i broj)
   const handlePinPickerMove = ({ lat, lng, isMoving }) => {
     setPinPickerCoords({ lat, lng });
     setPinPickerMoving(isMoving);
 
     if (!isMoving) {
       reverseGeocode(lat, lng).then(res => {
-        if (res && res.address) {
-          setPinPickerAddress(res.address);
+        if (res) {
+          setPinPickerResult(res);
         }
       });
     }
   };
 
-  // Potvrda lokacije izabrane čiodom na mapi
+  // Potvrda lokacije izabrane čiodom na mapi: upisuje pronađenu ulicu i broj u adresu, a grad u grad
   const handleConfirmPinLocation = () => {
     if (pinPickerCoords.lat && pinPickerCoords.lng) {
-      let finalStreet = orderForm.adresa;
-      let finalCity = orderForm.grad;
-
-      if (pinPickerAddress) {
-        const parts = pinPickerAddress.split(',');
-        finalStreet = parts[0].trim();
-        if (parts.length > 1) {
-          finalCity = parts[parts.length - 1].trim();
-        }
-      }
+      const finalStreet = (pinPickerResult?.street || orderForm.adresa || '').trim();
+      const finalCity = (pinPickerResult?.city || orderForm.grad || 'Smederevo').trim();
 
       setOrderForm(p => ({
         ...p,
         adresa: finalStreet || p.adresa,
-        grad: finalCity || p.grad || 'Smederevo',
+        grad: finalCity,
         gpsX: pinPickerCoords.lat,
         gpsY: pinPickerCoords.lng
       }));
     }
     setShowPinPickerModal(false);
+  };
+
+  // Brisanje nedodeljenog radnog naloga od strane admina
+  const handleDeleteOrder = (orderToDel) => {
+    const confirmMsg = `Da li ste sigurni da želite da trajno obrišete radni nalog ${orderToDel.broj_naloga}?`;
+    const doDelete = async () => {
+      try {
+        await api.deleteOrder(orderToDel.id, firmId, user?.id);
+        if (focusedOrder?.id === orderToDel.id) {
+          setFocusedOrder(null);
+        }
+        loadDashboard(selectedDate);
+        const msg = `Radni nalog ${orderToDel.broj_naloga} je uspešno obrisan.`;
+        if (Platform.OS === 'web') {
+          window.alert(msg);
+        } else {
+          Alert.alert('Uspešno', msg);
+        }
+      } catch (err) {
+        const errMsg = err.message || 'Greška pri brisanju naloga.';
+        if (Platform.OS === 'web') {
+          window.alert(errMsg);
+        } else {
+          Alert.alert('Greška', errMsg);
+        }
+      }
+    };
+
+    if (Platform.OS === 'web') {
+      if (window.confirm(confirmMsg)) {
+        doDelete();
+      }
+    } else {
+      Alert.alert('Potvrda brisanja', confirmMsg, [
+        { text: 'Odustani', style: 'cancel' },
+        { text: 'Obriši', style: 'destructive', onPress: doDelete }
+      ]);
+    }
   };
 
   const handleSaveOrder = async () => {
@@ -895,18 +932,34 @@ export default function DispatcherScreen({ onBackToWorker, onSelectOrder }) {
                             </Text>
                           </TouchableOpacity>
 
-                          {onSelectOrder && (
-                            <TouchableOpacity
-                              style={styles.cardDetailsBtn}
-                              onPress={(e) => {
-                                e?.stopPropagation?.();
-                                onSelectOrder(o.id);
-                              }}
-                              activeOpacity={0.7}
-                            >
-                              <Text style={styles.cardDetailsBtnText}>Detalji ➜</Text>
-                            </TouchableOpacity>
-                          )}
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                            {(!o.majstor_id || o.status === 'KREIRANO') && (isAdmin || isOwner || isSuperAdmin) && (
+                              <TouchableOpacity
+                                style={styles.cardDeleteBtn}
+                                onPress={(e) => {
+                                  e?.stopPropagation?.();
+                                  handleDeleteOrder(o);
+                                }}
+                                activeOpacity={0.7}
+                              >
+                                <Trash2 size={12} color="#DC2626" style={{ marginRight: 3 }} />
+                                <Text style={styles.cardDeleteBtnText}>Obriši</Text>
+                              </TouchableOpacity>
+                            )}
+
+                            {onSelectOrder && (
+                              <TouchableOpacity
+                                style={styles.cardDetailsBtn}
+                                onPress={(e) => {
+                                  e?.stopPropagation?.();
+                                  onSelectOrder(o.id);
+                                }}
+                                activeOpacity={0.7}
+                              >
+                                <Text style={styles.cardDetailsBtnText}>Detalji ➜</Text>
+                              </TouchableOpacity>
+                            )}
+                          </View>
                         </View>
                       </TouchableOpacity>
                     );
@@ -1277,25 +1330,46 @@ export default function DispatcherScreen({ onBackToWorker, onSelectOrder }) {
               />
             </View>
 
-            {/* Donji bar sa adresom i dugmetom za potvrdu */}
-            <View style={styles.pinPickerFooterBar}>
-              <View style={{ flex: 1, paddingRight: 10 }}>
-                <Text style={styles.pinPickerAddrLabel}>Prepoznata adresa:</Text>
-                <Text style={styles.pinPickerAddrText} numberOfLines={2}>
-                  {pinPickerAddress || (pinPickerMoving ? 'Određivanje adrese...' : 'Pomerite mapu')}
-                </Text>
-                <Text style={styles.pinPickerCoordsText}>
-                  GPS: {pinPickerCoords.lat?.toFixed(5)}, {pinPickerCoords.lng?.toFixed(5)}
+            {/* Donji box sa pronađenom ulicom/brojem i pitanjem za potvrdu lokacije */}
+            <View style={styles.pinPickerPromptCard}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
+                <MapPin size={16} color="#EA580C" style={{ marginRight: 6 }} />
+                <Text style={styles.pinPickerPromptHeading}>Da li je ovo tačna lokacija klijenta?</Text>
+              </View>
+
+              <View style={styles.pinPickerDetectedRow}>
+                <Text style={styles.pinPickerDetectedLabel}>Pronađena ulica i broj:</Text>
+                <Text style={styles.pinPickerDetectedValue}>
+                  {pinPickerResult?.street || (pinPickerMoving ? 'Određivanje ulice i broja...' : 'Pomerite čiodu do željene zgrade')}
                 </Text>
               </View>
-              <TouchableOpacity
-                style={styles.pinPickerConfirmBtn}
-                onPress={handleConfirmPinLocation}
-                activeOpacity={0.8}
-              >
-                <Check size={16} color="#FFFFFF" style={{ marginRight: 6 }} />
-                <Text style={styles.pinPickerConfirmBtnText}>Potvrdi lokaciju</Text>
-              </TouchableOpacity>
+
+              <View style={styles.pinPickerDetectedRow}>
+                <Text style={styles.pinPickerDetectedLabel}>Grad / Mesto:</Text>
+                <Text style={styles.pinPickerDetectedValue}>{pinPickerResult?.city || 'Smederevo'}</Text>
+              </View>
+
+              <View style={styles.pinPickerBtnRow}>
+                <TouchableOpacity
+                  style={styles.pinPickerCancelBtn}
+                  onPress={() => setShowPinPickerModal(false)}
+                  activeOpacity={0.8}
+                >
+                  <Text style={styles.pinPickerCancelBtnText}>Odustani</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[
+                    styles.pinPickerConfirmBtn,
+                    (!pinPickerResult?.street && !orderForm.adresa) && { opacity: 0.6 }
+                  ]}
+                  onPress={handleConfirmPinLocation}
+                  activeOpacity={0.8}
+                >
+                  <Check size={16} color="#FFFFFF" style={{ marginRight: 6 }} />
+                  <Text style={styles.pinPickerConfirmBtnText}>Potvrdi ovu adresu</Text>
+                </TouchableOpacity>
+              </View>
             </View>
           </View>
         </View>
@@ -2231,16 +2305,83 @@ const styles = StyleSheet.create({
     marginTop: 2,
     fontWeight: '600'
   },
+  cardDeleteBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    borderRadius: 6,
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FECACA'
+  },
+  cardDeleteBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#DC2626'
+  },
+  pinPickerPromptCard: {
+    marginTop: 12,
+    padding: 12,
+    backgroundColor: '#FFF7ED',
+    borderRadius: 10,
+    borderWidth: 1.5,
+    borderColor: '#FDBA74'
+  },
+  pinPickerPromptHeading: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#C2410C'
+  },
+  pinPickerDetectedRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 3
+  },
+  pinPickerDetectedLabel: {
+    fontSize: 12,
+    color: '#7C2D12',
+    fontWeight: '600'
+  },
+  pinPickerDetectedValue: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#0F172A'
+  },
+  pinPickerBtnRow: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    alignItems: 'center',
+    gap: 10,
+    marginTop: 10,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#FED7AA'
+  },
+  pinPickerCancelBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#CBD5E1'
+  },
+  pinPickerCancelBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#64748B'
+  },
   pinPickerConfirmBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#059669',
     paddingHorizontal: 16,
-    paddingVertical: 10,
+    paddingVertical: 9,
     borderRadius: 8
   },
   pinPickerConfirmBtnText: {
-    fontSize: 13,
+    fontSize: 12.5,
     fontWeight: '800',
     color: '#FFFFFF'
   }

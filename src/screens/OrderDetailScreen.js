@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -48,7 +48,7 @@ import MapComponent from '../components/MapComponent';
 import SignaturePad from '../components/SignaturePad';
 
 export default function OrderDetailScreen({ orderId, onBack }) {
-  const { user, firmId } = useAuth();
+  const { user, firmId, isAdmin, isOwner, isSuperAdmin } = useAuth();
   const { width, height } = useWindowDimensions();
 
   // Detekcija orijentacije telefona / ekrana:
@@ -84,6 +84,11 @@ export default function OrderDetailScreen({ orderId, onBack }) {
   const [catalogItems, setCatalogItems] = useState([]);
   const [searchCatalogQuery, setSearchCatalogQuery] = useState('');
 
+  // Dispečersko / Admin upravljanje nalogom (Promena radnika i brisanje naloga)
+  const [workersList, setWorkersList] = useState([]);
+  const [showWorkerPickerModal, setShowWorkerPickerModal] = useState(false);
+  const [reassigning, setReassigning] = useState(false);
+
   useEffect(() => {
     loadOrderDetails();
   }, [orderId]);
@@ -97,10 +102,69 @@ export default function OrderDetailScreen({ orderId, onBack }) {
       setPaymentMethod(data.nacin_placanja || 'GOTOVINA');
       setSignatureData(data.potpis_klijenta_url || null);
       setSignerName(data.potpisnik_ime || data.klijent_ime || '');
+
+      // Ako je korisnik admin/vlasnik, dobavi listu svih majstora za promenu dodele
+      const hasAdminRights = isAdmin || isOwner || isSuperAdmin || user?.rola === 'admin' || user?.rola === 'owner' || user?.rola === 'superadmin';
+      if (hasAdminRights) {
+        try {
+          const dash = await api.getDispatcherDashboard(firmId);
+          setWorkersList(dash.workers || []);
+        } catch (dashErr) {}
+      }
     } catch (err) {
       Alert.alert('Greška', err.message || 'Neuspešno učitavanje detalja naloga.');
     } finally {
       setLoading(false);
+    }
+  };
+
+  // Promena majstora od strane admina
+  const handleAssignWorker = async (newWorkerId) => {
+    setReassigning(true);
+    try {
+      await api.assignOrderWorker(orderId, newWorkerId, user?.id);
+      setShowWorkerPickerModal(false);
+      await loadOrderDetails();
+      const msg = newWorkerId ? 'Majstor je uspešno promenjen / dodeljen!' : 'Nalog je uspešno razdužen (postavljen na Nedodeljen).';
+      if (Platform.OS === 'web') {
+        window.alert(msg);
+      } else {
+        Alert.alert('Uspešno', msg);
+      }
+    } catch (err) {
+      Alert.alert('Greška', err.message || 'Neuspešna promena majstora.');
+    } finally {
+      setReassigning(false);
+    }
+  };
+
+  // Brisanje nedodeljenog radnog naloga od strane admina
+  const handleDeleteOrder = () => {
+    const confirmMsg = `Da li ste sigurni da želite da trajno obrišete radni nalog ${order?.broj_naloga}?`;
+    const doDelete = async () => {
+      try {
+        await api.deleteOrder(orderId, firmId, user?.id);
+        const msg = `Radni nalog ${order?.broj_naloga} je uspešno obrisan.`;
+        if (Platform.OS === 'web') {
+          window.alert(msg);
+        } else {
+          Alert.alert('Uspešno', msg);
+        }
+        if (onBack) onBack();
+      } catch (err) {
+        Alert.alert('Greška', err.message || 'Neuspešno brisanje naloga.');
+      }
+    };
+
+    if (Platform.OS === 'web') {
+      if (window.confirm(confirmMsg)) {
+        doDelete();
+      }
+    } else {
+      Alert.alert('Potvrda brisanja', confirmMsg, [
+        { text: 'Odustani', style: 'cancel' },
+        { text: 'Obriši', style: 'destructive', onPress: doDelete }
+      ]);
     }
   };
 
@@ -457,6 +521,50 @@ export default function OrderDetailScreen({ orderId, onBack }) {
   const renderOrderDetailsForm = () => (
     <View style={styles.formContainer}>
       {renderStatusStepper()}
+
+      {/* DISPEČERSKO / ADMIN UPRAVLJANJE: PROMENA MAJSTORA I BRISANJE NEDODELJENOG NALOGA */}
+      {(isAdmin || isOwner || isSuperAdmin || user?.rola === 'admin' || user?.rola === 'owner' || user?.rola === 'superadmin') && (
+        <View style={styles.adminControlCard}>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              <Wrench size={15} color="#0284C7" style={{ marginRight: 6 }} />
+              <Text style={styles.adminControlTitle}>Dispečersko upravljanje nalogom</Text>
+            </View>
+            {(!order.majstor_id || order.status === 'KREIRANO') && (
+              <TouchableOpacity
+                style={styles.adminDeleteBtn}
+                onPress={handleDeleteOrder}
+                activeOpacity={0.8}
+              >
+                <Trash2 size={13} color="#FFFFFF" style={{ marginRight: 4 }} />
+                <Text style={styles.adminDeleteBtnText}>Obriši nalog</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+
+          <Text style={styles.adminWorkerLabel}>Dodeljeni majstor (izbor / promena):</Text>
+          <TouchableOpacity
+            style={styles.adminWorkerTrigger}
+            onPress={() => setShowWorkerPickerModal(true)}
+            activeOpacity={0.8}
+          >
+            <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
+              <View style={[styles.workerDotSmall, { backgroundColor: order.majstor_boja || (order.majstor_id ? '#059669' : '#EA580C') }]} />
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.adminWorkerName, !order.majstor_id && { color: '#C2410C' }]}>
+                  {order.majstor_ime ? `${order.majstor_ime} ${order.majstor_prezime || ''}` : '⚠️ Nedodeljen (Kliknite da dodelite radnika)'}
+                </Text>
+                {order.majstor_telefon ? (
+                  <Text style={styles.adminWorkerPhone}>📞 {order.majstor_telefon}</Text>
+                ) : null}
+              </View>
+            </View>
+            <View style={styles.adminChangeBadge}>
+              <Text style={styles.adminChangeBadgeText}>Promeni ▾</Text>
+            </View>
+          </TouchableOpacity>
+        </View>
+      )}
 
       {/* Kartica sa trajnom istorijom svih odlaganja i napomena sa terena */}
       {hasDelays && (
@@ -916,6 +1024,83 @@ export default function OrderDetailScreen({ orderId, onBack }) {
                 onPress={() => handleUpdateStatus('ODLOZENO', delayReason)}
               >
                 <Text style={styles.saveModalBtnText}>Potvrdi odlaganje</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* MODAL ZA PROMENU ILI DODELU MAJSTORA OD STRANE ADMINA */}
+      <Modal visible={showWorkerPickerModal} animationType="slide" transparent>
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContent, { maxWidth: 480 }]}>
+            <View style={styles.modalHeader}>
+              <View>
+                <Text style={styles.modalTitle}>Izbor majstora za nalog</Text>
+                <Text style={{ fontSize: 11.5, color: '#64748B', marginTop: 2 }}>
+                  Nalog: {order?.broj_naloga} • {order?.klijent_ime}
+                </Text>
+              </View>
+              <TouchableOpacity onPress={() => setShowWorkerPickerModal(false)} style={styles.modalCloseBtn} activeOpacity={0.7}>
+                <X size={18} color="#64748B" />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView style={{ maxHeight: 380, marginTop: 8 }}>
+              {/* Opcija 1: Razduži nalog (Nedodeljen) */}
+              <TouchableOpacity
+                style={[
+                  styles.workerPickRow,
+                  !order.majstor_id && styles.workerPickRowActiveOrange
+                ]}
+                onPress={() => handleAssignWorker(null)}
+                disabled={reassigning}
+                activeOpacity={0.8}
+              >
+                <View style={[styles.workerDotSmall, { backgroundColor: '#EA580C' }]} />
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.workerPickName, !order.majstor_id && { color: '#C2410C' }]}>
+                    ⚠️ Bez dodele (Nedodeljen)
+                  </Text>
+                  <Text style={styles.workerPickSub}>Vrati nalog u status KREIRANO i ukloni dodeljenog radnika</Text>
+                </View>
+                {!order.majstor_id && <Check size={16} color="#EA580C" />}
+              </TouchableOpacity>
+
+              {/* Opcija 2+: Svi aktivni majstori ovog servisa */}
+              {workersList.map(w => {
+                const isCurrent = String(order.majstor_id) === String(w.id);
+                return (
+                  <TouchableOpacity
+                    key={w.id}
+                    style={[
+                      styles.workerPickRow,
+                      isCurrent && styles.workerPickRowActive
+                    ]}
+                    onPress={() => handleAssignWorker(w.id)}
+                    disabled={reassigning}
+                    activeOpacity={0.8}
+                  >
+                    <View style={[styles.workerDotSmall, { backgroundColor: w.boja_markera || '#059669' }]} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={[styles.workerPickName, isCurrent && { color: '#0284C7' }]}>
+                        {w.ime} {w.prezime}
+                      </Text>
+                      <Text style={styles.workerPickSub}>📞 {w.telefon || '-'} • Status: {w.radni_status || 'SLOBODAN'}</Text>
+                    </View>
+                    {isCurrent && <Check size={16} color="#0284C7" />}
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+
+            <View style={{ marginTop: 12, alignItems: 'flex-end' }}>
+              <TouchableOpacity
+                style={styles.cancelModalBtn}
+                onPress={() => setShowWorkerPickerModal(false)}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.cancelModalBtnText}>Zatvori</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -1675,5 +1860,110 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#450A0A',
     marginTop: 2
+  },
+  adminControlCard: {
+    backgroundColor: '#F0F9FF',
+    borderRadius: 12,
+    padding: 12,
+    borderWidth: 1.5,
+    borderColor: '#BAE6FD',
+    marginBottom: 12
+  },
+  adminControlTitle: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#0369A1'
+  },
+  adminDeleteBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#DC2626',
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+    borderRadius: 6
+  },
+  adminDeleteBtnText: {
+    fontSize: 11.5,
+    fontWeight: '800',
+    color: '#FFFFFF'
+  },
+  adminWorkerLabel: {
+    fontSize: 11.5,
+    fontWeight: '700',
+    color: '#334155',
+    marginBottom: 4
+  },
+  adminWorkerTrigger: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#93C5FD',
+    borderRadius: 8,
+    padding: 10
+  },
+  adminWorkerName: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#0F172A'
+  },
+  adminWorkerPhone: {
+    fontSize: 11,
+    color: '#64748B',
+    marginTop: 2
+  },
+  adminChangeBadge: {
+    backgroundColor: '#E0F2FE',
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    borderRadius: 6
+  },
+  adminChangeBadgeText: {
+    fontSize: 11.5,
+    fontWeight: '800',
+    color: '#0284C7'
+  },
+  workerDotSmall: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    marginRight: 8
+  },
+  workerPickRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 10,
+    borderRadius: 8,
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    marginBottom: 6
+  },
+  workerPickRowActive: {
+    backgroundColor: '#F0F9FF',
+    borderColor: '#BAE6FD'
+  },
+  workerPickRowActiveOrange: {
+    backgroundColor: '#FFF7ED',
+    borderColor: '#FDBA74'
+  },
+  workerPickName: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#0F172A'
+  },
+  workerPickSub: {
+    fontSize: 11,
+    color: '#64748B',
+    marginTop: 2
+  },
+  modalCloseBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: '#F1F5F9',
+    justifyContent: 'center',
+    alignItems: 'center'
   }
 });

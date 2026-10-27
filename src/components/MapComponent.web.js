@@ -153,7 +153,7 @@ export default function MapComponent({
 
         markersRef.current['focused_client'] = L.marker(clientPos, { icon: clientIcon })
           .addTo(map)
-          .bindPopup(`<b>📍 Dolazna lokacija klijenta:</b><br/><b>${focusedOrder.klijent_ime || ''}</b><br/>${focusedOrder.adresa || ''}<br/><i>Nalog: ${focusedOrder.broj_naloga}</i>`)
+          .bindPopup(`<b>📍 DOLAZNA LOKACIJA KLIJENTA:</b><br/><b>${focusedOrder.klijent_ime || ''}</b><br/>${focusedOrder.adresa || ''}<br/><i>Radni nalog: ${focusedOrder.broj_naloga}</i>`)
           .openPopup();
 
         // 50m geofence krug dolazne lokacije
@@ -182,7 +182,7 @@ export default function MapComponent({
 
           markersRef.current['focused_worker'] = L.marker(workerPos, { icon: wIcon })
             .addTo(map)
-            .bindPopup(`<b>Polazna lokacija:</b><br/>${workerLocation.name || 'Vaša trenutna pozicija'}`);
+            .bindPopup(`<b>🏢 POLAZNA LOKACIJA:</b><br/>${workerLocation.name || 'Dispečerski centar / Polazna stanica'}`);
 
           // Iscrtavanje rute preko OSRM-a
           const osrmUrl = `https://router.project-osrm.org/route/v1/driving/${workerPos[1]},${workerPos[0]};${clientPos[1]},${clientPos[0]}?overview=full&geometries=geojson`;
@@ -309,9 +309,10 @@ export default function MapComponent({
     // Nalozi se na mapi prikazuju ISKLJUČIVO kada se klikne na radni nalog!
     // ==========================================================
     else {
-      // Prikaz majstora na mapi
+      // Prikaz majstora na mapi (SAMO ako su aktivni na terenu, NIKADA ako su SLOBODAN ili bez stvarne lokacije)
       (workers || []).forEach(w => {
-        if (w.gpsX && w.gpsY) {
+        const isFree = !w.radni_status || w.radni_status === 'SLOBODAN' || w.radni_status === 'NEAKTIVAN';
+        if (w.gpsX && w.gpsY && !isFree) {
           const pos = [parseFloat(w.gpsX), parseFloat(w.gpsY)];
           bounds.push(pos);
           const icon = L.divIcon({

@@ -159,10 +159,11 @@ const getMapHtml = (data) => `
           }
         }
       } else {
-        // Dispečerski pregled terena (Prikaz samo majstora i pozicije ulogovanog korisnika)
+        // Dispečerski pregled terena (Prikaz samo aktivnih majstora i pozicije ulogovanog korisnika)
         // Radni nalog se na mapi prikazuje TEK KADA SE KLIKNE NA NJEGA!
         (payload.workers || []).forEach(function(w) {
-          if (w.gpsX && w.gpsY) {
+          var isFree = !w.radni_status || w.radni_status === 'SLOBODAN' || w.radni_status === 'NEAKTIVAN';
+          if (w.gpsX && w.gpsY && !isFree) {
             var pos = [parseFloat(w.gpsX), parseFloat(w.gpsY)];
             bounds.push(pos);
             var icon = L.divIcon({

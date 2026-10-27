@@ -166,6 +166,8 @@ try {
           AND status_pretplate != 'ISTEKAO'
     ");
     $conn->exec("UPDATE firme SET status_pretplate = 'ISTEKAO' WHERE status_pretplate = 'BLOKIRAN'");
+    $conn->exec("UPDATE majstori_lokacija SET gpsX = NULL, gpsY = NULL WHERE (status = 'SLOBODAN' OR status IS NULL) AND gpsX = 44.6655");
+    $conn->exec("UPDATE radni_nalozi SET gpsX = 44.6644, gpsY = 20.9272 WHERE LOWER(adresa) LIKE '%vojvode stepe 1%' AND gpsX > 44.67");
 // 8. Tabela: role (Definisane tri uloge: 1 - superadmin, 2 - admin, 3 - korisnik)
     $conn->exec("
         CREATE TABLE IF NOT EXISTS `role` (
@@ -689,6 +691,113 @@ elseif ($action === 'create_order') {
 }
 
 // ==========================================================
+// 5C. BRISANJE RADNOG NALOGA (DELETE_ORDER - SAMO ZA NEDODELJENE)
+// ==========================================================
+elseif ($action === 'delete_order') {
+    $order_id = isset($inputData['order_id']) ? intval($inputData['order_id']) : 0;
+    $firma_id = isset($inputData['firma_id']) ? intval($inputData['firma_id']) : 0;
+
+    if ($order_id <= 0) {
+        sendResponse('error', 'ID naloga je obavezan.', 400);
+    }
+
+    $chk = $conn->prepare("SELECT id, firma_id, broj_naloga, status, majstor_id FROM radni_nalozi WHERE id = ?");
+    $chk->execute([$order_id]);
+    $order = $chk->fetch();
+
+    if (!$order) {
+        sendResponse('error', 'Radni nalog ne postoji.', 404);
+    }
+
+    if ($firma_id > 0 && intval($order['firma_id']) !== $firma_id) {
+        sendResponse('error', 'Nemate dozvolu za brisanje ovog radnog naloga.', 403);
+    }
+
+    // Dozvoljeno brisanje samo ako nije nikom dodeljen ili ako je status KREIRANO bez majstora
+    if (!empty($order['majstor_id']) || !in_array($order['status'], ['KREIRANO', 'ODLOZENO'])) {
+        sendResponse('error', 'Nije dozvoljeno brisanje naloga koji je dodeljen majstoru ili je u radu. Prvo razdužite nalog.', 400);
+    }
+
+    $conn->beginTransaction();
+    try {
+        $conn->prepare("DELETE FROM nalozi_stavke WHERE nalog_id = ?")->execute([$order_id]);
+        $conn->prepare("DELETE FROM status_istorija WHERE nalog_id = ?")->execute([$order_id]);
+        $conn->prepare("DELETE FROM radni_nalozi WHERE id = ?")->execute([$order_id]);
+        $conn->commit();
+
+        sendResponse('success', [
+            'deleted' => true,
+            'order_id' => $order_id,
+            'broj_naloga' => $order['broj_naloga'],
+            'poruka' => "Radni nalog {$order['broj_naloga']} je uspešno obrisan."
+        ]);
+    } catch (Exception $e) {
+        if ($conn->inTransaction()) $conn->rollBack();
+        sendResponse('error', 'Greška pri brisanju naloga: ' . $e->getMessage(), 500);
+    }
+}
+
+// ==========================================================
+// 5D. PROMENA DODELJENOG MAJSTORA (ASSIGN_ORDER_WORKER)
+// ==========================================================
+elseif ($action === 'assign_order_worker') {
+    $order_id = isset($inputData['order_id']) ? intval($inputData['order_id']) : 0;
+    $majstor_id = isset($inputData['majstor_id']) && intval($inputData['majstor_id']) > 0 ? intval($inputData['majstor_id']) : null;
+    $promenio_id = isset($inputData['promenio_id']) ? intval($inputData['promenio_id']) : null;
+
+    if ($order_id <= 0) {
+        sendResponse('error', 'ID naloga je obavezan.', 400);
+    }
+
+    $chk = $conn->prepare("
+        SELECT rn.*, m.ime as stari_majstor_ime, m.prezime as stari_majstor_prezime 
+        FROM radni_nalozi rn 
+        LEFT JOIN korisnici m ON rn.majstor_id = m.id 
+        WHERE rn.id = ?
+    ");
+    $chk->execute([$order_id]);
+    $cur = $chk->fetch();
+    if (!$cur) {
+        sendResponse('error', 'Nalog ne postoji.', 404);
+    }
+
+    $stariStatus = $cur['status'];
+    $noviStatus = $stariStatus;
+    $komentar = '';
+
+    if ($majstor_id !== null) {
+        $stmtW = $conn->prepare("SELECT id, ime, prezime FROM korisnici WHERE id = ?");
+        $stmtW->execute([$majstor_id]);
+        $noviMajstor = $stmtW->fetch();
+        $naziv = $noviMajstor ? ($noviMajstor['ime'] . ' ' . $noviMajstor['prezime']) : "Majstor #{$majstor_id}";
+
+        if ($stariStatus === 'KREIRANO') {
+            $noviStatus = 'DODELJENO';
+        }
+        $komentar = "Admin promenio majstora na: {$naziv}";
+
+        $upd = $conn->prepare("UPDATE radni_nalozi SET majstor_id = ?, status = ?, poslednja_promena = NOW() WHERE id = ?");
+        $upd->execute([$majstor_id, $noviStatus, $order_id]);
+    } else {
+        $noviStatus = 'KREIRANO';
+        $komentar = "Admin razdužio radni nalog (postavljen na Nedodeljen)";
+
+        $upd = $conn->prepare("UPDATE radni_nalozi SET majstor_id = NULL, status = 'KREIRANO', poslednja_promena = NOW() WHERE id = ?");
+        $upd->execute([$order_id]);
+    }
+
+    $log = $conn->prepare("INSERT INTO status_istorija (nalog_id, prethodni_status, novi_status, promenio_id, komentar) VALUES (?, ?, ?, ?, ?)");
+    $log->execute([$order_id, $stariStatus, $noviStatus, $promenio_id, $komentar]);
+
+    sendResponse('success', [
+        'order_id' => $order_id,
+        'majstor_id' => $majstor_id,
+        'status' => $noviStatus,
+        'poruka' => $komentar
+    ]);
+}
+
+// ==========================================================
 // 6. KATALOG DELOVA I USLUGA (GET_CATALOG)
 // ==========================================================
 elseif ($action === 'get_catalog') {
@@ -757,8 +866,8 @@ elseif ($action === 'get_dispatcher_dashboard') {
     // 1. Majstori i njihova trenutna pozicija (svi aktivni radnici ovog servisa)
     $stmtWorkers = $conn->prepare("
         SELECT k.id, k.ime, k.prezime, k.telefon, k.email, k.lozinka_tekst, k.boja_markera,
-               COALESCE(ml.gpsX, 44.6655) as gpsX,
-               COALESCE(ml.gpsY, 20.9290) as gpsY,
+               ml.gpsX as gpsX,
+               ml.gpsY as gpsY,
                COALESCE(ml.brzina, 0) as brzina,
                COALESCE(ml.kurs, 0) as kurs,
                COALESCE(ml.status, 'SLOBODAN') as radni_status,

@@ -113,72 +113,104 @@ export async function searchAddressSuggestions(query, defaultCity = 'Smederevo')
 }
 
 /**
- * Reversno geokodiranje: za zadate koordinate vraća naziv ulice i grada
+ * Reversno geokodiranje: za zadate koordinate vraća naziv ulice, kućni broj i grad.
+ * Koristi provereni algoritam iz taxi aplikacije (Nominatim kao primarni, Photon kao fallback).
+ * NIKADA ne upisuje koordinate u polje ulice ili grada!
  */
-export async function reverseGeocode(lat, lng) {
-  if (!lat || !lng) return null;
-  const cacheKey = `${lat.toFixed(5)},${lng.toFixed(5)}`;
-  if (geoCache.has(cacheKey)) return geoCache.get(cacheKey);
+export async function reverseGeocode(latitude, longitude) {
+  if (!latitude || !longitude) {
+    return { address: '', street: '', houseNumber: '', city: 'Smederevo', lat: 0, lng: 0 };
+  }
 
+  const latNum = parseFloat(latitude);
+  const lngNum = parseFloat(longitude);
+  const cacheKey = `${latNum.toFixed(5)},${lngNum.toFixed(5)}`;
+
+  if (geoCache.has(cacheKey)) {
+    return geoCache.get(cacheKey);
+  }
+
+  let formattedAddress = '';
+  let street = '';
+  let houseNumber = '';
+  let city = 'Smederevo';
+
+  // 1. Nominatim OpenStreetMap (najprecizniji za kućne brojeve u Srbiji)
   try {
-    const url = `https://photon.komoot.io/reverse?lat=${lat}&lon=${lng}`;
-    const res = await fetch(url);
-    if (res.ok) {
-      const data = await res.json();
-      const p = data.features?.[0]?.properties;
-      if (p) {
-        const street = p.street || p.name || '';
-        const houseNum = p.housenumber || '';
-        const city = p.city || p.town || p.village || 'Smederevo';
-        let addr = street;
-        if (houseNum) addr += ` ${houseNum}`;
-        if (city) addr += `, ${city}`;
+    const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    const timeoutId = controller ? setTimeout(() => controller.abort(), 2500) : null;
+    const url = `https://nominatim.openstreetmap.org/reverse?lat=${latNum}&lon=${lngNum}&format=json&addressdetails=1`;
+    const headers = Platform.OS === 'web' ? {} : { 'User-Agent': 'MajstorNalogApp/1.0 (kontakt@majstornalog.rs)' };
+    const response = await fetch(url, { headers, signal: controller?.signal });
+    if (timeoutId) clearTimeout(timeoutId);
 
-        const ret = {
-          address: addr,
-          street: houseNum ? `${street} ${houseNum}` : street,
-          city,
-          lat,
-          lng
-        };
-        geoCache.set(cacheKey, ret);
-        return ret;
+    if (response.ok) {
+      const data = await response.json();
+      if (data && data.address) {
+        const addr = data.address;
+        const streetName = addr.road || addr.street || addr.pedestrian || addr.footway || addr.path || addr.suburb || '';
+        houseNumber = addr.house_number || '';
+        city = addr.city || addr.town || addr.village || addr.municipality || 'Smederevo';
+        const poiName = addr.amenity || addr.building || addr.tourism || addr.historic || '';
+
+        const primaryStreet = streetName || poiName || '';
+        if (primaryStreet && houseNumber) {
+          street = `${primaryStreet} ${houseNumber}`;
+          formattedAddress = `${street}, ${city}`;
+        } else if (primaryStreet) {
+          street = primaryStreet;
+          formattedAddress = `${primaryStreet}, ${city}`;
+        } else if (data.display_name) {
+          const parts = data.display_name.split(',');
+          street = parts[0] ? parts[0].trim() : '';
+          formattedAddress = street ? `${street}, ${city}` : city;
+        }
       }
     }
-  } catch (e) {}
+  } catch (nomErr) {
+    // Tiho nastavi na Photon fallback
+  }
 
-  // Fallback na Nominatim reverse
-  try {
-    const nomUrl = `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json&addressdetails=1`;
-    const headers = Platform.OS === 'web' ? {} : { 'User-Agent': 'MajstorNalogApp/1.0' };
-    const res = await fetch(nomUrl, { headers });
-    if (res.ok) {
-      const data = await res.json();
-      const a = data.address || {};
-      const street = a.road || a.street || '';
-      const num = a.house_number || '';
-      const city = a.city || a.town || a.village || 'Smederevo';
-      let addr = street;
-      if (num) addr += ` ${num}`;
-      if (city) addr += `, ${city}`;
+  // 2. Photon (Komoot) fallback ako Nominatim nije vratio adresu
+  if (!street) {
+    try {
+      const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+      const timeoutId = controller ? setTimeout(() => controller.abort(), 2500) : null;
+      const url = `https://photon.komoot.io/reverse?lat=${latNum}&lon=${lngNum}`;
+      const response = await fetch(url, { signal: controller?.signal });
+      if (timeoutId) clearTimeout(timeoutId);
 
-      const ret = {
-        address: addr || data.display_name,
-        street: num ? `${street} ${num}` : street,
-        city,
-        lat,
-        lng
-      };
-      geoCache.set(cacheKey, ret);
-      return ret;
+      if (response.ok) {
+        const data = await response.json();
+        if (data && data.features && data.features.length > 0) {
+          const p = data.features[0].properties || {};
+          const streetName = p.street || p.name || '';
+          houseNumber = p.housenumber || '';
+          city = p.city || p.town || p.village || city || 'Smederevo';
+
+          if (streetName && houseNumber) {
+            street = `${streetName} ${houseNumber}`;
+            formattedAddress = `${street}, ${city}`;
+          } else if (streetName) {
+            street = streetName;
+            formattedAddress = `${streetName}, ${city}`;
+          }
+        }
+      }
+    } catch (photonErr) {
+      // Ignoriši
     }
-  } catch (e) {}
+  }
 
-  return {
-    address: `${lat.toFixed(5)}, ${lng.toFixed(5)}`,
-    street: '',
-    city: 'Smederevo',
-    lat,
-    lng
+  const result = {
+    address: formattedAddress || (street ? `${street}, ${city}` : `Odabrana lokacija (${city})`),
+    street: street.trim(),
+    houseNumber: houseNumber.trim(),
+    city: city.trim(),
+    lat: latNum,
+    lng: lngNum
   };
+
+  geoCache.set(cacheKey, result);
+  return result;
 }

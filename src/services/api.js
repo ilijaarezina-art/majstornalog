@@ -154,6 +154,20 @@ export const api = {
     });
   },
 
+  deleteOrder: async (orderId, firmId, userId) => {
+    return request('delete_order', {
+      method: 'POST',
+      body: { order_id: orderId, firma_id: firmId, user_id: userId }
+    });
+  },
+
+  assignOrderWorker: async (orderId, workerId, adminId) => {
+    return request('assign_order_worker', {
+      method: 'POST',
+      body: { order_id: orderId, majstor_id: workerId, promenio_id: adminId }
+    });
+  },
+
   // SUPERADMIN SAAS ENDPOINTI
   getSuperadminDashboard: async () => {
     return request('get_superadmin_dashboard');
