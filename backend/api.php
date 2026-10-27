@@ -967,7 +967,6 @@ elseif ($action === 'get_users') {
 // 15. KREIRANJE / IZMENA KORISNIKA SA DODELOM ROLE PO ID-JU (SAVE_USER)
 // ==========================================================
 elseif ($action === 'save_user') {
-    try {
     $user_id = isset($inputData['id']) ? intval($inputData['id']) : 0;
     $ime = isset($inputData['ime']) ? trim($inputData['ime']) : '';
     $prezime = isset($inputData['prezime']) ? trim($inputData['prezime']) : '';
@@ -1058,12 +1057,10 @@ elseif ($action === 'save_user') {
             }
         }
 
-        sendResponse('success', [
+                sendResponse('success', [
             "id" => $newId,
             "poruka" => "Novi korisnik je uspešno kreiran sa dodeljenom rolom ID: {$rola_id} ({$rola_kod})."
         ]);
-    } catch (Exception $e) {
-        sendResponse('error', 'Greška: ' . $e->getMessage(), 500);
     }
 }
 
