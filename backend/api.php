@@ -561,6 +561,7 @@ elseif ($action === 'complete_order') {
 // 5B. KREIRANJE NOVOG RADNOG NALOGA (CREATE_ORDER)
 // ==========================================================
 elseif ($action === 'create_order') {
+    try {
     $firma_id = isset($inputData['firma_id']) ? intval($inputData['firma_id']) : 0;
     if ($firma_id <= 0) {
         sendResponse('error', 'Firma ID je obavezan.', 400);
@@ -586,11 +587,8 @@ elseif ($action === 'create_order') {
     $gpsY = isset($inputData['gpsY']) && !empty($inputData['gpsY']) ? floatval($inputData['gpsY']) : null;
 
     if (!$gpsX || !$gpsY) {
-        $fStmt = $conn->prepare("SELECT gpsX, gpsY FROM firme WHERE id = ? LIMIT 1");
-        $fStmt->execute([$firma_id]);
-        $fRow = $fStmt->fetch();
-        $baseX = ($fRow && !empty($fRow['gpsX'])) ? floatval($fRow['gpsX']) : 44.6655;
-        $baseY = ($fRow && !empty($fRow['gpsY'])) ? floatval($fRow['gpsY']) : 20.9290;
+        $baseX = 44.6655;
+        $baseY = 20.9290;
         // Blagi slučajni ofset (oko 100-400m) unutar grada da se markeri na mapi lepo razdvoje
         $randOffsetX = (mt_rand(-150, 150)) / 10000.0;
         $randOffsetY = (mt_rand(-150, 150)) / 10000.0;
@@ -675,6 +673,9 @@ elseif ($action === 'create_order') {
         "status" => $status,
         "poruka" => "Radni nalog {$broj_naloga} je uspešno kreiran!"
     ]);
+    } catch (Exception $e) {
+        sendResponse('error', 'Greska pri kreiranju naloga: ' . $e->getMessage(), 500);
+    }
 }
 
 // ==========================================================
@@ -739,14 +740,15 @@ elseif ($action === 'update_location') {
 // 8. DISPEČERSKA TABLA (GET_DISPATCHER_DASHBOARD)
 // ==========================================================
 elseif ($action === 'get_dispatcher_dashboard') {
-    $firma_id = isset($_GET['firma_id']) ? intval($_GET['firma_id']) : 1;
-    $datum = isset($_GET['datum']) ? trim($_GET['datum']) : date('Y-m-d');
+    try {
+        $firma_id = isset($_GET['firma_id']) ? intval($_GET['firma_id']) : 1;
+        $datum = isset($_GET['datum']) ? trim($_GET['datum']) : date('Y-m-d');
 
     // 1. Majstori i njihova trenutna pozicija (svi aktivni radnici ovog servisa)
     $stmtWorkers = $conn->prepare("
         SELECT k.id, k.ime, k.prezime, k.telefon, k.email, k.lozinka_tekst, k.boja_markera,
-               COALESCE(ml.gpsX, f.gpsX, 44.6655) as gpsX,
-               COALESCE(ml.gpsY, f.gpsY, 20.9290) as gpsY,
+               COALESCE(ml.gpsX, 44.6655) as gpsX,
+               COALESCE(ml.gpsY, 20.9290) as gpsY,
                ml.brzina, ml.kurs,
                COALESCE(ml.status, 'SLOBODAN') as radni_status,
                ml.poslednje_azuriranje, ml.trenutni_nalog_id
@@ -778,6 +780,9 @@ elseif ($action === 'get_dispatcher_dashboard') {
         "workers" => $workers,
         "orders" => $orders
     ]);
+    } catch (Exception $e) {
+        sendResponse('error', 'Greska dispecerske table: ' . $e->getMessage(), 500);
+    }
 }
 
 // ==========================================================
@@ -1163,11 +1168,8 @@ elseif ($action === 'save_user') {
                 $chkMl = $conn->prepare("SELECT majstor_id FROM majstori_lokacija WHERE majstor_id = ? LIMIT 1");
                 $chkMl->execute([$newId]);
                 if (!$chkMl->fetch()) {
-                    $fCoordStmt = $conn->prepare("SELECT gpsX, gpsY FROM firme WHERE id = ? LIMIT 1");
-                    $fCoordStmt->execute([$firma_id]);
-                    $fCoord = $fCoordStmt->fetch();
-                    $initX = ($fCoord && !empty($fCoord['gpsX'])) ? floatval($fCoord['gpsX']) : 44.6655;
-                    $initY = ($fCoord && !empty($fCoord['gpsY'])) ? floatval($fCoord['gpsY']) : 20.9290;
+                    $initX = 44.6655;
+                    $initY = 20.9290;
 
                     $conn->prepare("
                         INSERT INTO majstori_lokacija (majstor_id, firma_id, gpsX, gpsY, brzina, kurs, status, poslednje_azuriranje)
