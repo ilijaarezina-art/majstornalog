@@ -1,5 +1,6 @@
-﻿import React, { useEffect, useRef } from 'react';
-import { View, StyleSheet } from 'react-native';
+import React, { useEffect, useRef } from 'react';
+import { View, StyleSheet, Text, TouchableOpacity, Platform } from 'react-native';
+import { MapPin, Navigation, Crosshair, Plus, Minus } from 'lucide-react-native';
 
 export default function MapComponent({
   clientLocation,
@@ -8,6 +9,9 @@ export default function MapComponent({
   orders = [],
   workers = [],
   isDispatcher = false,
+  focusedOrder = null,
+  isPinPickerMode = false,
+  onPinCoordsChange = null,
   height = 320
 }) {
   const mapContainerRef = useRef(null);
@@ -35,7 +39,6 @@ export default function MapComponent({
       }
 
       const L = window.L;
-      // Default center: Smederevo center
       const defaultCenter = [44.6627, 20.9300];
       const map = L.map(mapContainerRef.current, {
         zoomControl: true,
@@ -45,6 +48,21 @@ export default function MapComponent({
       L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
         maxZoom: 19
       }).addTo(map);
+
+      // Listener for moving map in Pin Picker mode
+      map.on('move', () => {
+        if (mapInstanceRef.current && onPinCoordsChange) {
+          const center = map.getCenter();
+          onPinCoordsChange({ lat: center.lat, lng: center.lng, isMoving: true });
+        }
+      });
+
+      map.on('moveend', () => {
+        if (mapInstanceRef.current && onPinCoordsChange) {
+          const center = map.getCenter();
+          onPinCoordsChange({ lat: center.lat, lng: center.lng, isMoving: false });
+        }
+      });
 
       mapInstanceRef.current = map;
       updateMapLayers();
@@ -100,11 +118,105 @@ export default function MapComponent({
 
     const bounds = [];
 
-    // Worker mode: show client (yellow pin + geofence 50m), start location if recorded, worker, and route
+    // ==========================================================
+    // 1. PIN PICKER MODE (DEFINISANJE LOKACIJE ČIODOM)
+    // ==========================================================
+    if (isPinPickerMode) {
+      // Map stays interactive, center pin is rendered over the map via CSS
+      if (clientLocation && clientLocation.lat && clientLocation.lng) {
+        map.setView([clientLocation.lat, clientLocation.lng], 16);
+      }
+      return;
+    }
+
+    // ==========================================================
+    // 2. FOCUSED ORDER MODE (Kliknut je radni nalog na tabli!)
+    // Prikazuje se:
+    // - Dolazna lokacija klijenta (Žuta/crvena čioda + 50m geofence)
+    // - Polazna lokacija ulogovanog korisnika / dodeljenog majstora
+    // - OSRM ruta između njih
+    // ==========================================================
+    if (focusedOrder) {
+      const cLat = parseFloat(focusedOrder.gpsX);
+      const cLng = parseFloat(focusedOrder.gpsY);
+
+      if (cLat && cLng) {
+        const clientPos = [cLat, cLng];
+        bounds.push(clientPos);
+
+        const clientIcon = L.divIcon({
+          className: 'focused-client-pin',
+          html: '<div style="background:#EAB308;color:#713F12;width:36px;height:36px;border-radius:50% 50% 50% 0;transform:rotate(-45deg);border:3px solid white;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 12px rgba(0,0,0,0.4);"><span style="transform:rotate(45deg);font-size:16px;font-weight:900;">📍</span></div>',
+          iconSize: [36, 36],
+          iconAnchor: [18, 36]
+        });
+
+        markersRef.current['focused_client'] = L.marker(clientPos, { icon: clientIcon })
+          .addTo(map)
+          .bindPopup(`<b>📍 Dolazna lokacija klijenta:</b><br/><b>${focusedOrder.klijent_ime || ''}</b><br/>${focusedOrder.adresa || ''}<br/><i>Nalog: ${focusedOrder.broj_naloga}</i>`)
+          .openPopup();
+
+        // 50m geofence krug dolazne lokacije
+        geofenceCircleRef.current = L.circle(clientPos, {
+          radius: 50,
+          color: '#CA8A04',
+          weight: 2,
+          dashArray: '5, 5',
+          fillColor: '#FEF08A',
+          fillOpacity: 0.25
+        }).addTo(map);
+
+        // Polazna lokacija: ulogovani korisnik ili dodeljeni majstor
+        const workerPos = workerLocation?.lat && workerLocation?.lng
+          ? [workerLocation.lat, workerLocation.lng]
+          : null;
+
+        if (workerPos) {
+          bounds.push(workerPos);
+          const wIcon = L.divIcon({
+            className: 'focused-worker-pin',
+            html: '<div style="background:#0284C7;color:white;width:36px;height:36px;border-radius:50%;border:3px solid white;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 12px rgba(0,0,0,0.4);font-size:17px;">🔧</div>',
+            iconSize: [36, 36],
+            iconAnchor: [18, 18]
+          });
+
+          markersRef.current['focused_worker'] = L.marker(workerPos, { icon: wIcon })
+            .addTo(map)
+            .bindPopup(`<b>Polazna lokacija:</b><br/>${workerLocation.name || 'Vaša trenutna pozicija'}`);
+
+          // Iscrtavanje rute preko OSRM-a
+          const osrmUrl = `https://router.project-osrm.org/route/v1/driving/${workerPos[1]},${workerPos[0]};${clientPos[1]},${clientPos[0]}?overview=full&geometries=geojson`;
+          fetch(osrmUrl)
+            .then(res => res.json())
+            .then(data => {
+              if (data.routes && data.routes.length > 0) {
+                const coords = data.routes[0].geometry.coordinates.map(pt => [pt[1], pt[0]]);
+                if (routeLineRef.current) map.removeLayer(routeLineRef.current);
+                routeLineRef.current = L.polyline(coords, {
+                  color: '#0284C7',
+                  weight: 5,
+                  opacity: 0.9
+                }).addTo(map);
+              }
+            })
+            .catch(() => {});
+        }
+      }
+
+      if (bounds.length > 1) {
+        map.fitBounds(bounds, { padding: [50, 50], maxZoom: 16 });
+      } else if (bounds.length === 1) {
+        map.setView(bounds[0], 16);
+      }
+      return;
+    }
+
+    // ==========================================================
+    // 3. REGULAR WORKER DETAIL VIEW
+    // ==========================================================
     if (!isDispatcher) {
       let clientPos = null;
 
-      // 1. Lokacija klijenta: žuta čioda + 50m geofence krug
       if (clientLocation && clientLocation.lat && clientLocation.lng) {
         clientPos = [clientLocation.lat, clientLocation.lng];
         bounds.push(clientPos);
@@ -119,7 +231,6 @@ export default function MapComponent({
           .addTo(map)
           .bindPopup(`<b>📍 Klijent: ${clientLocation.name || ''}</b><br/>${clientLocation.address || 'Adresa intervencije'}`);
 
-        // Geofence krug 50m oko lokacije klijenta
         geofenceCircleRef.current = L.circle(clientPos, {
           radius: 50,
           color: '#CA8A04',
@@ -128,10 +239,8 @@ export default function MapComponent({
           fillColor: '#FEF08A',
           fillOpacity: 0.25
         }).addTo(map);
-        geofenceCircleRef.current.bindPopup('Dozvoljena zona dolaska na adresu (50m)');
       }
 
-      // 2. Lokacija majstora na početku rada (startLocation)
       if (startLocation && startLocation.lat && startLocation.lng) {
         const startPos = [startLocation.lat, startLocation.lng];
         bounds.push(startPos);
@@ -151,7 +260,6 @@ export default function MapComponent({
           .addTo(map)
           .bindPopup(`<b>Lokacija majstora na početku rada:</b><br/>${labelText}<br/>Razdaljina od klijenta: ${dist} m`);
 
-        // Iscrtavanje linije spajanja klijent <-> start
         if (clientPos) {
           connectLineRef.current = L.polyline([clientPos, startPos], {
             color: pinColor,
@@ -162,7 +270,6 @@ export default function MapComponent({
         }
       }
 
-      // 3. Trenutna lokacija majstora
       if (workerLocation && workerLocation.lat && workerLocation.lng) {
         const workerPos = [workerLocation.lat, workerLocation.lng];
         bounds.push(workerPos);
@@ -177,7 +284,6 @@ export default function MapComponent({
           .addTo(map)
           .bindPopup('<b>Vaša lokacija</b>');
 
-        // Ruta ako postoji klijent i nalog je još na putu (nije startovan)
         if (clientPos && (!startLocation || !startLocation.lat)) {
           const osrmUrl = `https://router.project-osrm.org/route/v1/driving/${workerLocation.lng},${workerLocation.lat};${clientLocation.lng},${clientLocation.lat}?overview=full&geometries=geojson`;
           fetch(osrmUrl)
@@ -197,11 +303,16 @@ export default function MapComponent({
         }
       }
     } 
-    // Dispatcher mode: prikaz ekipa i naloga sa semaforskim bojama
+    // ==========================================================
+    // 4. DISPATCHER OVERVIEW (EKIPE I LOKACIJA KORISNIKA)
+    // Prikazuje samo aktivne majstore i poziciju ulogovanog korisnika.
+    // Nalozi se na mapi prikazuju ISKLJUČIVO kada se klikne na radni nalog!
+    // ==========================================================
     else {
+      // Prikaz majstora na mapi
       (workers || []).forEach(w => {
         if (w.gpsX && w.gpsY) {
-          const pos = [w.gpsX, w.gpsY];
+          const pos = [parseFloat(w.gpsX), parseFloat(w.gpsY)];
           bounds.push(pos);
           const icon = L.divIcon({
             className: 'custom-dispatcher-worker',
@@ -215,40 +326,20 @@ export default function MapComponent({
         }
       });
 
-      // Pravila boja na mapi dispečera:
-      // 1. ZAVRŠENO = Zelena (#059669)
-      // 2. START VAN OPSEGA 50m = Crvena (#DC2626)
-      // 3. AKTIVNO U OPSEGU / ČEKA = Plava (#0284C7)
-      (orders || []).forEach(o => {
-        if (o.gpsX && o.gpsY) {
-          const pos = [o.gpsX, o.gpsY];
-          bounds.push(pos);
-
-          let sColor;
-          let statusDesc;
-
-          if (o.status === 'ZAVRSENO') {
-            sColor = '#059669'; // Zelena
-            statusDesc = 'ZAVRŠENO ✓';
-          } else if (Number(o.start_u_opsegu) === 0) {
-            sColor = '#DC2626'; // Crvena: startovan van opsega
-            statusDesc = `START VAN OPSEGA (${o.start_udaljenost_m || '?'}m) ⚠️`;
-          } else {
-            sColor = '#0284C7'; // Plava: u opsegu ili čeka
-            statusDesc = o.status === 'U_RADU' ? 'U RADU (U OPSEGU)' : (o.status === 'NA_PUTU' ? 'NA PUTU' : 'ČEKA');
-          }
-
-          const icon = L.divIcon({
-            className: 'custom-dispatcher-order',
-            html: `<div style="background:${sColor};color:white;width:30px;height:30px;border-radius:50%;border:2px solid white;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 7px rgba(0,0,0,0.4);font-size:12px;font-weight:900;">${o.broj_naloga ? o.broj_naloga.split('-').pop() : 'N'}</div>`,
-            iconSize: [30, 30],
-            iconAnchor: [15, 15]
-          });
-          markersRef.current[`order_${o.id}`] = L.marker(pos, { icon })
-            .addTo(map)
-            .bindPopup(`<b>${o.broj_naloga}</b> - ${o.klijent_ime || ''}<br/>Adresa: ${o.adresa || ''}<br/>Kvar: ${o.opis_kvara || 'Nije navedeno'}<br/><span style="color:${sColor};font-weight:800;">${statusDesc}</span>`);
-        }
-      });
+      // Prikaz polazne lokacije ulogovanog korisnika
+      if (workerLocation && workerLocation.lat && workerLocation.lng) {
+        const uPos = [parseFloat(workerLocation.lat), parseFloat(workerLocation.lng)];
+        bounds.push(uPos);
+        const uIcon = L.divIcon({
+          className: 'custom-dispatcher-me',
+          html: '<div style="background:#0284C7;color:white;width:34px;height:34px;border-radius:50%;border:2.5px solid white;display:flex;align-items:center;justify-content:center;box-shadow:0 3px 8px rgba(0,0,0,0.4);font-size:16px;">🏢</div>',
+          iconSize: [34, 34],
+          iconAnchor: [17, 17]
+        });
+        markersRef.current['dispatcher_me'] = L.marker(uPos, { icon: uIcon })
+          .addTo(map)
+          .bindPopup(`<b>Vaša lokacija:</b><br/>${workerLocation.name || 'Dispečerski centar'}`);
+      }
     }
 
     if (bounds.length > 1) {
@@ -266,11 +357,24 @@ export default function MapComponent({
 
   useEffect(() => {
     updateMapLayers();
-  }, [clientLocation, workerLocation, startLocation, orders, workers, isDispatcher]);
+  }, [clientLocation, workerLocation, startLocation, orders, workers, isDispatcher, focusedOrder, isPinPickerMode]);
 
   return (
     <View style={[styles.container, { height }]}>
       <div ref={mapContainerRef} style={{ width: '100%', height: '100%' }} />
+
+      {/* Centered Floating Pin Picker Indicator (When in Pin Mode) */}
+      {isPinPickerMode && (
+        <View style={styles.pinOverlayContainer} pointerEvents="none">
+          <View style={styles.pinAnchor}>
+            <View style={styles.pinHead}>
+              <MapPin size={26} color="#FFFFFF" />
+            </View>
+            <View style={styles.pinTail} />
+            <View style={styles.pinShadow} />
+          </View>
+        </View>
+      )}
     </View>
   );
 }
@@ -282,6 +386,51 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     borderWidth: 1,
     borderColor: '#E2E8F0',
-    backgroundColor: '#F1F5F9'
+    backgroundColor: '#F1F5F9',
+    position: 'relative'
+  },
+  pinOverlayContainer: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 9999
+  },
+  pinAnchor: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 40
+  },
+  pinHead: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#EA580C',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 3,
+    borderColor: '#FFFFFF',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.35,
+    shadowRadius: 6,
+    elevation: 8
+  },
+  pinTail: {
+    width: 0,
+    height: 0,
+    borderLeftWidth: 6,
+    borderRightWidth: 6,
+    borderTopWidth: 8,
+    borderLeftColor: 'transparent',
+    borderRightColor: 'transparent',
+    borderTopColor: '#EA580C',
+    marginTop: -1
+  },
+  pinShadow: {
+    width: 14,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: 'rgba(0,0,0,0.3)',
+    marginTop: 4
   }
 });

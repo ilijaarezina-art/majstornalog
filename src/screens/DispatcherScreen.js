@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -45,6 +45,7 @@ import { useAuth } from '../context/AuthContext';
 import { api } from '../services/api';
 import { colors } from '../theme/colors';
 import MapComponent from '../components/MapComponent';
+import { searchAddressSuggestions, reverseGeocode } from '../services/geocoding';
 
 const TIP_INTERVENCIJE_OPTIONS = [
   { id: 'REDOVAN_SERVIS', label: 'Redovan servis' },
@@ -228,6 +229,46 @@ export default function DispatcherScreen({ onBackToWorker, onSelectOrder }) {
   const [workers, setWorkers] = useState([]);
   const [orders, setOrders] = useState([]);
 
+  // Fokusirani nalog za prikaz rute i dolazne lokacije na mapi
+  const [focusedOrder, setFocusedOrder] = useState(null);
+
+  // Polazna lokacija ulogovanog korisnika (dispečera)
+  const [myLocation, setMyLocation] = useState({
+    lat: 44.6627,
+    lng: 20.9300,
+    name: user ? `${user.ime} ${user.prezime}` : 'Vaša lokacija'
+  });
+
+  // Geokodiranje i sugestije adresa za klijenta (preuzeto iz taxi aplikacije)
+  const [addressSuggestions, setAddressSuggestions] = useState([]);
+  const [isSearchingAddress, setIsSearchingAddress] = useState(false);
+  const debounceTimerRef = useRef(null);
+
+  // Pin picker modal (definisanje dolazne lokacije klijenta čiodom na mapi)
+  const [showPinPickerModal, setShowPinPickerModal] = useState(false);
+  const [pinPickerCoords, setPinPickerCoords] = useState({ lat: 44.6627, lng: 20.9300 });
+  const [pinPickerAddress, setPinPickerAddress] = useState('');
+  const [pinPickerMoving, setPinPickerMoving] = useState(false);
+
+  // Pokušaj preuzimanja tačne GPS lokacije ulogovanog korisnika preko pregledača
+  useEffect(() => {
+    if (typeof navigator !== 'undefined' && navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          if (pos && pos.coords) {
+            setMyLocation({
+              lat: pos.coords.latitude,
+              lng: pos.coords.longitude,
+              name: user ? `${user.ime} ${user.prezime}` : 'Vaša lokacija'
+            });
+          }
+        },
+        () => {},
+        { enableHighAccuracy: true, timeout: 5000 }
+      );
+    }
+  }, [user]);
+
   // Modal za kreiranje novog radnog naloga
   const [showCreateOrderModal, setShowCreateOrderModal] = useState(false);
   const [creatingOrder, setCreatingOrder] = useState(false);
@@ -238,6 +279,8 @@ export default function DispatcherScreen({ onBackToWorker, onSelectOrder }) {
     telefon: '',
     adresa: '',
     grad: 'Smederevo',
+    gpsX: null,
+    gpsY: null,
     tip_intervencije: 'REDOVAN_SERVIS',
     prioritet: 'NORMALAN',
     opis_kvara: '',
@@ -302,11 +345,15 @@ export default function DispatcherScreen({ onBackToWorker, onSelectOrder }) {
   const handleOpenCreateOrder = () => {
     setOrderError('');
     setIsWorkerDropdownOpen(false);
+    setAddressSuggestions([]);
+    setIsSearchingAddress(false);
     setOrderForm({
       klijent_ime: '',
       telefon: '',
       adresa: '',
       grad: 'Smederevo',
+      gpsX: null,
+      gpsY: null,
       tip_intervencije: 'REDOVAN_SERVIS',
       prioritet: 'NORMALAN',
       opis_kvara: '',
@@ -315,6 +362,99 @@ export default function DispatcherScreen({ onBackToWorker, onSelectOrder }) {
       zakazano_vreme: '10:00'
     });
     setShowCreateOrderModal(true);
+  };
+
+  // Dinamička pretraga i prepoznavanje adresa (kao u taxi aplikaciji)
+  const handleAddressChange = (text) => {
+    setOrderForm(p => ({ ...p, adresa: text, gpsX: null, gpsY: null }));
+
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current);
+    }
+
+    if (!text || text.trim().length < 2) {
+      setAddressSuggestions([]);
+      setIsSearchingAddress(false);
+      return;
+    }
+
+    setIsSearchingAddress(true);
+    debounceTimerRef.current = setTimeout(async () => {
+      try {
+        const results = await searchAddressSuggestions(text, orderForm.grad || 'Smederevo');
+        setAddressSuggestions(results || []);
+      } catch (e) {
+        setAddressSuggestions([]);
+      } finally {
+        setIsSearchingAddress(false);
+      }
+    }, 350);
+  };
+
+  // Odabir prepoznate adrese iz padajućeg menija
+  const handleSelectSuggestion = (item) => {
+    setOrderForm(p => ({
+      ...p,
+      adresa: item.street || item.address,
+      grad: item.city || p.grad || 'Smederevo',
+      gpsX: item.lat,
+      gpsY: item.lng
+    }));
+    setAddressSuggestions([]);
+  };
+
+  // Otvaranje modala sa čiodom na mapi za definisanje lokacije klijenta
+  const handleOpenPinPicker = () => {
+    const initLat = orderForm.gpsX || myLocation.lat || 44.6627;
+    const initLng = orderForm.gpsY || myLocation.lng || 20.9300;
+    setPinPickerCoords({ lat: initLat, lng: initLng });
+    setPinPickerAddress(orderForm.adresa || 'Određivanje adrese...');
+    setShowPinPickerModal(true);
+
+    reverseGeocode(initLat, initLng).then(res => {
+      if (res && res.address) {
+        setPinPickerAddress(res.address);
+      }
+    });
+  };
+
+  // Pomeranje mape u Pin Picker režimu
+  const handlePinPickerMove = ({ lat, lng, isMoving }) => {
+    setPinPickerCoords({ lat, lng });
+    setPinPickerMoving(isMoving);
+
+    if (!isMoving) {
+      reverseGeocode(lat, lng).then(res => {
+        if (res && res.address) {
+          setPinPickerAddress(res.address);
+        }
+      });
+    }
+  };
+
+  // Potvrda lokacije izabrane čiodom na mapi
+  const handleConfirmPinLocation = () => {
+    if (pinPickerCoords.lat && pinPickerCoords.lng) {
+      let finalStreet = orderForm.adresa;
+      let finalCity = orderForm.grad;
+
+      if (pinPickerAddress) {
+        const parts = pinPickerAddress.split(',');
+        finalStreet = parts[0].trim();
+        if (parts.length > 1) {
+          finalCity = parts[parts.length - 1].trim();
+        }
+      }
+
+      setOrderForm(p => ({
+        ...p,
+        adresa: finalStreet || p.adresa,
+        grad: finalCity || p.grad || 'Smederevo',
+        gpsX: pinPickerCoords.lat,
+        gpsY: pinPickerCoords.lng
+      }));
+    }
+    setShowPinPickerModal(false);
   };
 
   const handleSaveOrder = async () => {
@@ -334,6 +474,20 @@ export default function DispatcherScreen({ onBackToWorker, onSelectOrder }) {
     setCreatingOrder(true);
     setOrderError('');
     try {
+      // Ako koordinate nisu ručno ili sugestijom postavljene, izvrši automatski geocode pre snimanja
+      let finalGpsX = orderForm.gpsX;
+      let finalGpsY = orderForm.gpsY;
+
+      if (!finalGpsX || !finalGpsY) {
+        try {
+          const autoFound = await searchAddressSuggestions(orderForm.adresa.trim(), orderForm.grad.trim() || 'Smederevo');
+          if (autoFound && autoFound.length > 0) {
+            finalGpsX = autoFound[0].lat;
+            finalGpsY = autoFound[0].lng;
+          }
+        } catch (geoErr) {}
+      }
+
       const zakazano_za = `${orderForm.zakazano_datum} ${orderForm.zakazano_vreme || '10:00'}:00`;
       const res = await api.createOrder({
         firma_id: firmId,
@@ -341,6 +495,8 @@ export default function DispatcherScreen({ onBackToWorker, onSelectOrder }) {
         telefon: orderForm.telefon.trim(),
         adresa: orderForm.adresa.trim(),
         grad: orderForm.grad.trim() || 'Smederevo',
+        gpsX: finalGpsX,
+        gpsY: finalGpsY,
         tip_intervencije: orderForm.tip_intervencije,
         prioritet: orderForm.prioritet,
         opis_kvara: orderForm.opis_kvara.trim(),
@@ -453,11 +609,37 @@ export default function DispatcherScreen({ onBackToWorker, onSelectOrder }) {
                 </View>
               </View>
 
+              {focusedOrder && (
+                <View style={styles.mapFocusBanner}>
+                  <View style={{ flex: 1, paddingRight: 8 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                      <MapPin size={15} color="#CA8A04" />
+                      <Text style={styles.mapFocusBannerTitle}>
+                        Prikaz rute za nalog: <Text style={{ color: '#0284C7', fontWeight: '800' }}>{focusedOrder.broj_naloga}</Text>
+                      </Text>
+                    </View>
+                    <Text style={styles.mapFocusBannerSub} numberOfLines={1}>
+                      👤 {focusedOrder.klijent_ime} • 📍 {focusedOrder.adresa}, {focusedOrder.grad || 'Smederevo'}
+                    </Text>
+                  </View>
+                  <TouchableOpacity
+                    style={styles.mapFocusClearBtn}
+                    onPress={() => setFocusedOrder(null)}
+                    activeOpacity={0.7}
+                  >
+                    <X size={14} color="#DC2626" style={{ marginRight: 4 }} />
+                    <Text style={styles.mapFocusClearBtnText}>Poništi fokus</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+
               <MapComponent
                 isDispatcher={true}
                 workers={workers}
                 orders={orders}
-                height={isDesktop ? 570 : 280}
+                focusedOrder={focusedOrder}
+                workerLocation={myLocation}
+                height={isDesktop ? (focusedOrder ? 515 : 570) : 280}
               />
             </View>
           </View>
@@ -489,11 +671,12 @@ export default function DispatcherScreen({ onBackToWorker, onSelectOrder }) {
                 ) : (
                   fieldOrders.map(fo => {
                     const sb = getStatusBadge(fo.status);
+                    const isFocused = focusedOrder?.id === fo.id;
                     return (
                       <TouchableOpacity
                         key={fo.id}
-                        style={styles.fieldOrderCard}
-                        onPress={() => onSelectOrder && onSelectOrder(fo.id)}
+                        style={[styles.fieldOrderCard, isFocused && styles.orderCardFocused]}
+                        onPress={() => setFocusedOrder(prev => prev?.id === fo.id ? null : fo)}
                         activeOpacity={0.7}
                       >
                         <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -522,6 +705,36 @@ export default function DispatcherScreen({ onBackToWorker, onSelectOrder }) {
                           {fo.opis_kvara ? (
                             <Text style={styles.fieldFaultText} numberOfLines={2}>Kvar: {fo.opis_kvara}</Text>
                           ) : null}
+                        </View>
+
+                        {/* Akcioni red na kartici: Prikaz rute na mapi i Detalji naloga */}
+                        <View style={styles.cardActionRow}>
+                          <TouchableOpacity
+                            style={[styles.showOnMapBtn, isFocused && styles.showOnMapBtnActive]}
+                            onPress={(e) => {
+                              e?.stopPropagation?.();
+                              setFocusedOrder(prev => prev?.id === fo.id ? null : fo);
+                            }}
+                            activeOpacity={0.7}
+                          >
+                            <MapPin size={12} color={isFocused ? '#FFFFFF' : '#0284C7'} style={{ marginRight: 4 }} />
+                            <Text style={[styles.showOnMapBtnText, isFocused && { color: '#FFFFFF' }]}>
+                              {isFocused ? 'Ukloni sa mape' : 'Prikaži na mapi'}
+                            </Text>
+                          </TouchableOpacity>
+
+                          {onSelectOrder && (
+                            <TouchableOpacity
+                              style={styles.cardDetailsBtn}
+                              onPress={(e) => {
+                                e?.stopPropagation?.();
+                                onSelectOrder(fo.id);
+                              }}
+                              activeOpacity={0.7}
+                            >
+                              <Text style={styles.cardDetailsBtnText}>Detalji ➜</Text>
+                            </TouchableOpacity>
+                          )}
                         </View>
                       </TouchableOpacity>
                     );
@@ -610,12 +823,13 @@ export default function DispatcherScreen({ onBackToWorker, onSelectOrder }) {
                   dateOrders.map(o => {
                     const sb = getStatusBadge(o.status);
                     const hasWorker = Boolean(o.majstor_id && (o.majstor_ime || o.majstor_prezime));
+                    const isFocused = focusedOrder?.id === o.id;
 
                     return (
                       <TouchableOpacity
                         key={o.id}
-                        style={styles.orderCardDetailed}
-                        onPress={() => onSelectOrder && onSelectOrder(o.id)}
+                        style={[styles.orderCardDetailed, isFocused && styles.orderCardFocused]}
+                        onPress={() => setFocusedOrder(prev => prev?.id === o.id ? null : o)}
                         activeOpacity={0.7}
                       >
                         {/* 1. Red: Broj naloga (001/2026), status i prioritet */}
@@ -662,6 +876,36 @@ export default function DispatcherScreen({ onBackToWorker, onSelectOrder }) {
                               <AlertTriangle size={12} color="#FFFFFF" style={{ marginRight: 5 }} />
                               <Text style={styles.unassignedWorkerPillText}>Nedodeljen</Text>
                             </View>
+                          )}
+                        </View>
+
+                        {/* Akcioni red na kartici: Prikaz rute na mapi i Detalji naloga */}
+                        <View style={styles.cardActionRow}>
+                          <TouchableOpacity
+                            style={[styles.showOnMapBtn, isFocused && styles.showOnMapBtnActive]}
+                            onPress={(e) => {
+                              e?.stopPropagation?.();
+                              setFocusedOrder(prev => prev?.id === o.id ? null : o);
+                            }}
+                            activeOpacity={0.7}
+                          >
+                            <MapPin size={12} color={isFocused ? '#FFFFFF' : '#0284C7'} style={{ marginRight: 4 }} />
+                            <Text style={[styles.showOnMapBtnText, isFocused && { color: '#FFFFFF' }]}>
+                              {isFocused ? 'Ukloni sa mape' : 'Prikaži na mapi'}
+                            </Text>
+                          </TouchableOpacity>
+
+                          {onSelectOrder && (
+                            <TouchableOpacity
+                              style={styles.cardDetailsBtn}
+                              onPress={(e) => {
+                                e?.stopPropagation?.();
+                                onSelectOrder(o.id);
+                              }}
+                              activeOpacity={0.7}
+                            >
+                              <Text style={styles.cardDetailsBtnText}>Detalji ➜</Text>
+                            </TouchableOpacity>
                           )}
                         </View>
                       </TouchableOpacity>
@@ -726,16 +970,64 @@ export default function DispatcherScreen({ onBackToWorker, onSelectOrder }) {
               </View>
 
               <View style={styles.formRow2}>
-                <View style={{ flex: 1.3 }}>
-                  <Text style={styles.label}>Adresa intervencije *</Text>
-                  <TextInput
-                    style={styles.input}
-                    value={orderForm.adresa}
-                    onChangeText={(t) => setOrderForm(p => ({ ...p, adresa: t }))}
-                    placeholder="Ulica i broj"
-                    placeholderTextColor="#94A3B8"
-                  />
+                <View style={{ flex: 1.3, position: 'relative', zIndex: 100 }}>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                    <Text style={[styles.label, { marginVertical: 0 }]}>Adresa intervencije *</Text>
+                    <TouchableOpacity
+                      style={styles.pickPinBtn}
+                      onPress={handleOpenPinPicker}
+                      activeOpacity={0.7}
+                    >
+                      <MapPin size={11} color="#EA580C" style={{ marginRight: 3 }} />
+                      <Text style={styles.pickPinBtnText}>Čioda na mapi</Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  <View style={{ position: 'relative' }}>
+                    <TextInput
+                      style={styles.input}
+                      value={orderForm.adresa}
+                      onChangeText={handleAddressChange}
+                      placeholder="Ulica i kućni broj"
+                      placeholderTextColor="#94A3B8"
+                    />
+                    {isSearchingAddress && (
+                      <View style={styles.inputSpinner}>
+                        <ActivityIndicator size="small" color="#0284C7" />
+                      </View>
+                    )}
+                  </View>
+
+                  {/* Padajući meni sa prepoznatim adresama */}
+                  {addressSuggestions.length > 0 && (
+                    <View style={styles.suggestionsDropdown}>
+                      {addressSuggestions.map((item, idx) => (
+                        <TouchableOpacity
+                          key={item.id || idx}
+                          style={styles.suggestionRow}
+                          onPress={() => handleSelectSuggestion(item)}
+                          activeOpacity={0.7}
+                        >
+                          <MapPin size={13} color="#0284C7" style={{ marginRight: 6, marginTop: 2 }} />
+                          <View style={{ flex: 1 }}>
+                            <Text style={styles.suggestionTitle}>{item.street || item.address}</Text>
+                            <Text style={styles.suggestionSub}>{item.city} • GPS: {item.lat?.toFixed(4)}, {item.lng?.toFixed(4)}</Text>
+                          </View>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  )}
+
+                  {orderForm.gpsX && orderForm.gpsY ? (
+                    <View style={styles.gpsSuccessPill}>
+                      <CheckCircle size={11} color="#059669" style={{ marginRight: 4 }} />
+                      <Text style={styles.gpsSuccessPillText} numberOfLines={1}>
+                        GPS: {orderForm.gpsX?.toFixed(5)}, {orderForm.gpsY?.toFixed(5)} ✓
+                      </Text>
+                    </View>
+                  ) : null}
                 </View>
+
                 <View style={{ flex: 0.9 }}>
                   <Text style={styles.label}>Grad</Text>
                   <TextInput
@@ -953,6 +1245,56 @@ export default function DispatcherScreen({ onBackToWorker, onSelectOrder }) {
                 ) : (
                   <Text style={styles.saveBtnText}>Kreiraj radni nalog</Text>
                 )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* MODAL: DEFINISANJE DOLAZNE LOKACIJE KLIJENTA ČIODOM NA MAPI (kao u taxi aplikaciji) */}
+      <Modal visible={showPinPickerModal} transparent animationType="slide">
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalCard, { maxWidth: 680, padding: 16 }]}>
+            <View style={styles.modalHeader}>
+              <View>
+                <Text style={styles.modalTitle}>📍 Odredite dolaznu lokaciju klijenta</Text>
+                <Text style={styles.modalSub}>
+                  Pomerajte mapu tako da se narandžasta čioda u centru nađe na adresi klijenta
+                </Text>
+              </View>
+              <TouchableOpacity onPress={() => setShowPinPickerModal(false)} style={styles.closeBtn} activeOpacity={0.7}>
+                <X size={18} color="#64748B" />
+              </TouchableOpacity>
+            </View>
+
+            {/* Interaktivna mapa sa fiksiranom čiodom u centru */}
+            <View style={{ height: 380, width: '100%', borderRadius: 12, overflow: 'hidden' }}>
+              <MapComponent
+                isPinPickerMode={true}
+                clientLocation={pinPickerCoords}
+                onPinCoordsChange={handlePinPickerMove}
+                height={380}
+              />
+            </View>
+
+            {/* Donji bar sa adresom i dugmetom za potvrdu */}
+            <View style={styles.pinPickerFooterBar}>
+              <View style={{ flex: 1, paddingRight: 10 }}>
+                <Text style={styles.pinPickerAddrLabel}>Prepoznata adresa:</Text>
+                <Text style={styles.pinPickerAddrText} numberOfLines={2}>
+                  {pinPickerAddress || (pinPickerMoving ? 'Određivanje adrese...' : 'Pomerite mapu')}
+                </Text>
+                <Text style={styles.pinPickerCoordsText}>
+                  GPS: {pinPickerCoords.lat?.toFixed(5)}, {pinPickerCoords.lng?.toFixed(5)}
+                </Text>
+              </View>
+              <TouchableOpacity
+                style={styles.pinPickerConfirmBtn}
+                onPress={handleConfirmPinLocation}
+                activeOpacity={0.8}
+              >
+                <Check size={16} color="#FFFFFF" style={{ marginRight: 6 }} />
+                <Text style={styles.pinPickerConfirmBtnText}>Potvrdi lokaciju</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -1704,6 +2046,202 @@ const styles = StyleSheet.create({
   saveBtnText: {
     fontSize: 12.5,
     fontWeight: '700',
+    color: '#FFFFFF'
+  },
+  mapFocusBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#FEF9C3',
+    borderWidth: 1.5,
+    borderColor: '#FACC15',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    marginBottom: 10
+  },
+  mapFocusBannerTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#854D0E'
+  },
+  mapFocusBannerSub: {
+    fontSize: 11.5,
+    color: '#A16207',
+    marginTop: 2
+  },
+  mapFocusClearBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#FECACA',
+    borderRadius: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 5
+  },
+  mapFocusClearBtnText: {
+    fontSize: 11.5,
+    fontWeight: '700',
+    color: '#DC2626'
+  },
+  orderCardFocused: {
+    borderColor: '#0284C7',
+    borderWidth: 2,
+    backgroundColor: '#F0F9FF',
+    ...Platform.select({
+      ios: { shadowColor: '#0284C7', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.2, shadowRadius: 6 },
+      android: { elevation: 4 },
+      web: { boxShadow: '0 0 0 2px rgba(2, 132, 199, 0.4)' }
+    })
+  },
+  cardActionRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: 8,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#F1F5F9'
+  },
+  showOnMapBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 6,
+    backgroundColor: '#F0F9FF',
+    borderWidth: 1,
+    borderColor: '#BAE6FD'
+  },
+  showOnMapBtnActive: {
+    backgroundColor: '#0284C7',
+    borderColor: '#0284C7'
+  },
+  showOnMapBtnText: {
+    fontSize: 11.5,
+    fontWeight: '700',
+    color: '#0284C7'
+  },
+  cardDetailsBtn: {
+    paddingHorizontal: 8,
+    paddingVertical: 5
+  },
+  cardDetailsBtnText: {
+    fontSize: 11.5,
+    fontWeight: '700',
+    color: '#64748B'
+  },
+  pickPinBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFF7ED',
+    borderWidth: 1,
+    borderColor: '#FDBA74',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6
+  },
+  pickPinBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#EA580C'
+  },
+  inputSpinner: {
+    position: 'absolute',
+    right: 10,
+    top: 10
+  },
+  suggestionsDropdown: {
+    position: 'absolute',
+    top: '100%',
+    left: 0,
+    right: 0,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    borderRadius: 8,
+    marginTop: 4,
+    zIndex: 9999,
+    maxHeight: 200,
+    overflow: 'hidden',
+    ...Platform.select({
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.15, shadowRadius: 8 },
+      android: { elevation: 6 },
+      web: { boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.15)' }
+    })
+  },
+  suggestionRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    padding: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9'
+  },
+  suggestionTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#0F172A'
+  },
+  suggestionSub: {
+    fontSize: 10.5,
+    color: '#64748B',
+    marginTop: 1
+  },
+  gpsSuccessPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#ECFDF5',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    marginTop: 4
+  },
+  gpsSuccessPillText: {
+    fontSize: 10.5,
+    fontWeight: '600',
+    color: '#059669'
+  },
+  pinPickerFooterBar: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: 12,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#F1F5F9'
+  },
+  pinPickerAddrLabel: {
+    fontSize: 10.5,
+    fontWeight: '700',
+    color: '#64748B',
+    textTransform: 'uppercase'
+  },
+  pinPickerAddrText: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#0F172A',
+    marginTop: 2
+  },
+  pinPickerCoordsText: {
+    fontSize: 11,
+    color: '#0284C7',
+    marginTop: 2,
+    fontWeight: '600'
+  },
+  pinPickerConfirmBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#059669',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 8
+  },
+  pinPickerConfirmBtnText: {
+    fontSize: 13,
+    fontWeight: '800',
     color: '#FFFFFF'
   }
 });
