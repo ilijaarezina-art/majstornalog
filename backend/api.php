@@ -166,6 +166,41 @@ try {
           AND status_pretplate != 'ISTEKAO'
     ");
     $conn->exec("UPDATE firme SET status_pretplate = 'ISTEKAO' WHERE status_pretplate = 'BLOKIRAN'");
+// 8. Tabela: role (Definisane tri uloge: 1 - superadmin, 2 - admin, 3 - korisnik)
+    $conn->exec("
+        CREATE TABLE IF NOT EXISTS `role` (
+          `id` int(11) NOT NULL AUTO_INCREMENT,
+          `kod` varchar(30) NOT NULL UNIQUE,
+          `naziv` varchar(100) NOT NULL,
+          `opis` varchar(255) DEFAULT NULL,
+          PRIMARY KEY (`id`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    ");
+
+    $conn->exec("
+        INSERT INTO `role` (`id`, `kod`, `naziv`, `opis`) VALUES
+        (1, 'superadmin', 'Super Administrator', 'Globalni administrator platforme (vidi sve i dodeljuje uloge i servise)'),
+        (2, 'admin', 'Administrator servisa', 'Admin dodeljenog servisa (upravlja svojim servisom i unosi radnike)'),
+        (3, 'korisnik', 'Običan korisnik', 'Registrovani korisnik koji čeka dodelu servisa i uloge')
+        ON DUPLICATE KEY UPDATE `kod` = VALUES(`kod`), `naziv` = VALUES(`naziv`), `opis` = VALUES(`opis`);
+    ");
+
+    // Proširenje tabele korisnici: rola_id i lozinka_tekst
+    $colsK = $conn->query("SHOW COLUMNS FROM korisnici")->fetchAll(PDO::FETCH_COLUMN);
+    if (!in_array('rola_id', $colsK)) {
+        $conn->exec("ALTER TABLE korisnici ADD COLUMN `rola_id` int(11) NOT NULL DEFAULT 3 AFTER `id`");
+        $conn->exec("ALTER TABLE korisnici ADD KEY `idx_rola_id` (`rola_id`)");
+    }
+    if (!in_array('lozinka_tekst', $colsK)) {
+        $conn->exec("ALTER TABLE korisnici ADD COLUMN `lozinka_tekst` varchar(255) DEFAULT 'majstor123' AFTER `lozinka`");
+    }
+
+    // Usklađivanje postojećih naloga sa ID brojevima rola
+    $conn->exec("ALTER TABLE korisnici MODIFY COLUMN `rola` varchar(30) NOT NULL DEFAULT 'korisnik'");
+    $conn->exec("UPDATE korisnici SET rola_id = 1, rola = 'superadmin', lozinka_tekst = 'admin123' WHERE rola = 'superadmin' OR email = 'admin@majstornalog.rs'");
+    $conn->exec("UPDATE korisnici SET rola_id = 2, rola = 'admin' WHERE rola IN ('vlasnik', 'admin')");
+    $conn->exec("UPDATE korisnici SET rola_id = 3 WHERE rola_id IS NULL OR rola_id NOT IN (1, 2, 3)");
+    $conn->exec("UPDATE korisnici SET lozinka_tekst = 'majstor123' WHERE lozinka_tekst IS NULL OR lozinka_tekst = ''");
 } catch (Exception $migErr) {
     // Tiho ignoriši ako kolone već postoje
 }
@@ -587,13 +622,19 @@ elseif ($action === 'get_dispatcher_dashboard') {
     $firma_id = isset($_GET['firma_id']) ? intval($_GET['firma_id']) : 1;
     $datum = isset($_GET['datum']) ? trim($_GET['datum']) : date('Y-m-d');
 
-    // 1. Majstori i njihova trenutna pozicija
+    // 1. Majstori i njihova trenutna pozicija (svi aktivni radnici ovog servisa)
     $stmtWorkers = $conn->prepare("
-        SELECT k.id, k.ime, k.prezime, k.telefon, k.boja_markera,
-               ml.gpsX, ml.gpsY, ml.brzina, ml.kurs, ml.status as radni_status, ml.poslednje_azuriranje, ml.trenutni_nalog_id
+        SELECT k.id, k.ime, k.prezime, k.telefon, k.email, k.lozinka_tekst, k.boja_markera,
+               COALESCE(ml.gpsX, f.gpsX, 44.6655) as gpsX,
+               COALESCE(ml.gpsY, f.gpsY, 20.9290) as gpsY,
+               ml.brzina, ml.kurs,
+               COALESCE(ml.status, 'SLOBODAN') as radni_status,
+               ml.poslednje_azuriranje, ml.trenutni_nalog_id
         FROM korisnici k
         LEFT JOIN majstori_lokacija ml ON k.id = ml.majstor_id
-        WHERE k.firma_id = ? AND k.rola = 'majstor' AND k.aktivan = 1
+        LEFT JOIN firme f ON k.firma_id = f.id
+        WHERE k.firma_id = ? AND (k.rola = 'majstor' OR k.rola = 'radnik' OR (k.rola_id = 3 AND k.firma_id IS NOT NULL)) AND k.aktivan = 1
+        ORDER BY k.id ASC
     ");
     $stmtWorkers->execute([$firma_id]);
     $workers = $stmtWorkers->fetchAll();
@@ -666,6 +707,21 @@ elseif ($action === 'get_superadmin_dashboard') {
     $stmtPaketi = $conn->query("SELECT * FROM paketi ORDER BY cena_mesecno ASC");
     $paketi = $stmtPaketi->fetchAll();
 
+    // 5. Spisak svih uloga (1 - superadmin, 2 - admin, 3 - korisnik)
+    $stmtRoles = $conn->query("SELECT * FROM role ORDER BY id ASC");
+    $roles = $stmtRoles->fetchAll();
+
+    // 6. Spisak svih registrovanih korisnika sa dodeljenom firmom i ulogom
+    $stmtUsers = $conn->query("
+        SELECT k.id, k.rola_id, k.rola, k.firma_id, k.ime, k.prezime, k.email, k.telefon, k.lozinka_tekst, k.aktivan, k.kreiran_at,
+               f.naziv as firma_naziv, r.naziv as rola_naziv, r.kod as rola_kod
+        FROM korisnici k
+        LEFT JOIN role r ON (k.rola_id = r.id OR k.rola = r.kod)
+        LEFT JOIN firme f ON k.firma_id = f.id
+        ORDER BY k.id DESC
+    ");
+    $users = $stmtUsers->fetchAll();
+
     sendResponse('success', [
         "stats" => [
             "total_firme" => intval($totalFirme),
@@ -673,10 +729,13 @@ elseif ($action === 'get_superadmin_dashboard') {
             "probni_firme" => intval($probniFirme),
             "istekle_firme" => intval($istekleFirme),
             "total_majstori" => intval($totalMajstori),
-            "total_nalozi" => intval($totalNalozi)
+            "total_nalozi" => intval($totalNalozi),
+            "total_korisnici" => count($users)
         ],
         "firme" => $firme,
-        "paketi" => $paketi
+        "paketi" => $paketi,
+        "roles" => $roles,
+        "users" => $users
     ]);
 }
 
@@ -868,6 +927,188 @@ elseif ($action === 'delete_firm') {
         }
         sendResponse('error', 'Greška pri brisanju servisa: ' . $e->getMessage(), 500);
     }
+}
+
+
+// ==========================================================
+// 14. PREUZIMANJE ROLA I KORISNIKA (GET_ROLES & GET_USERS)
+// ==========================================================
+elseif ($action === 'get_roles') {
+    $roles = $conn->query("SELECT * FROM role ORDER BY id ASC")->fetchAll();
+    sendResponse('success', $roles);
+}
+elseif ($action === 'get_users') {
+    $firma_id = isset($_GET['firma_id']) ? intval($_GET['firma_id']) : 0;
+    if ($firma_id > 0) {
+        $stmt = $conn->prepare("
+            SELECT k.id, k.rola_id, k.rola, k.firma_id, k.ime, k.prezime, k.email, k.telefon, k.lozinka_tekst, k.aktivan, k.kreiran_at,
+                   f.naziv as firma_naziv, r.naziv as rola_naziv, r.kod as rola_kod
+            FROM korisnici k
+            LEFT JOIN role r ON (k.rola_id = r.id OR k.rola = r.kod)
+            LEFT JOIN firme f ON k.firma_id = f.id
+            WHERE k.firma_id = ?
+            ORDER BY k.id DESC
+        ");
+        $stmt->execute([$firma_id]);
+    } else {
+        $stmt = $conn->query("
+            SELECT k.id, k.rola_id, k.rola, k.firma_id, k.ime, k.prezime, k.email, k.telefon, k.lozinka_tekst, k.aktivan, k.kreiran_at,
+                   f.naziv as firma_naziv, r.naziv as rola_naziv, r.kod as rola_kod
+            FROM korisnici k
+            LEFT JOIN role r ON (k.rola_id = r.id OR k.rola = r.kod)
+            LEFT JOIN firme f ON k.firma_id = f.id
+            ORDER BY k.id DESC
+        ");
+    }
+    sendResponse('success', $stmt->fetchAll());
+}
+
+// ==========================================================
+// 15. KREIRANJE / IZMENA KORISNIKA SA DODELOM ROLE PO ID-JU (SAVE_USER)
+// ==========================================================
+elseif ($action === 'save_user') {
+    $user_id = isset($inputData['id']) ? intval($inputData['id']) : 0;
+    $ime = isset($inputData['ime']) ? trim($inputData['ime']) : '';
+    $prezime = isset($inputData['prezime']) ? trim($inputData['prezime']) : '';
+    $email = isset($inputData['email']) ? trim($inputData['email']) : '';
+    $telefon = isset($inputData['telefon']) ? trim($inputData['telefon']) : '';
+    $lozinka = isset($inputData['lozinka']) ? trim($inputData['lozinka']) : '';
+    $rola_id = isset($inputData['rola_id']) ? intval($inputData['rola_id']) : 3;
+    $firma_id = isset($inputData['firma_id']) && !empty($inputData['firma_id']) ? intval($inputData['firma_id']) : null;
+    $aktivan = isset($inputData['aktivan']) ? intval($inputData['aktivan']) : 1;
+    $boja_markera = isset($inputData['boja_markera']) ? trim($inputData['boja_markera']) : '#0284C7';
+    $custom_rola = isset($inputData['rola']) ? trim($inputData['rola']) : '';
+
+    if (empty($ime) || empty($email)) {
+        sendResponse('error', 'Ime i email adresa su obavezni.', 400);
+    }
+
+    // Provera i dohvatanje koda role po njenom ID broju
+    $stmtR = $conn->prepare("SELECT id, kod, naziv FROM role WHERE id = ? LIMIT 1");
+    $stmtR->execute([$rola_id]);
+    $roleRow = $stmtR->fetch();
+    $rola_kod = $roleRow ? $roleRow['kod'] : 'korisnik';
+    if (!empty($custom_rola)) {
+        $rola_kod = $custom_rola;
+    }
+
+    // SuperAdmin (ID = 1) ne pripada nijednoj firmi
+    if ($rola_id === 1 || $rola_kod === 'superadmin') {
+        $firma_id = null;
+    }
+
+    // Proveri jedinstvenost email adrese
+    $chkEmail = $conn->prepare("SELECT id FROM korisnici WHERE email = ? AND id != ? LIMIT 1");
+    $chkEmail->execute([$email, $user_id]);
+    if ($chkEmail->fetch()) {
+        sendResponse('error', 'Korisnik sa ovom email adresom već postoji u bazi.', 400);
+    }
+
+    if ($user_id > 0) {
+        $sql = "UPDATE korisnici SET ime = ?, prezime = ?, email = ?, telefon = ?, rola_id = ?, rola = ?, firma_id = ?, boja_markera = ?, aktivan = ?";
+        $params = [$ime, $prezime, $email, $telefon, $rola_id, $rola_kod, $firma_id, $boja_markera, $aktivan];
+
+        if (!empty($lozinka)) {
+            $sql .= ", lozinka = ?, lozinka_tekst = ?";
+            $params[] = password_hash($lozinka, PASSWORD_DEFAULT);
+            $params[] = $lozinka;
+        }
+
+        $sql .= " WHERE id = ?";
+        $params[] = $user_id;
+
+        $stmt = $conn->prepare($sql);
+        $stmt->execute($params);
+
+        sendResponse('success', [
+            "id" => $user_id,
+            "poruka" => "Korisnik je uspešno sačuvan sa dodeljenom rolom ID: {$rola_id} ({$rola_kod})."
+        ]);
+    } else {
+        $lozinkaPlain = !empty($lozinka) ? $lozinka : 'majstor123';
+        $hash = password_hash($lozinkaPlain, PASSWORD_DEFAULT);
+
+        $stmt = $conn->prepare("
+            INSERT INTO korisnici (rola_id, rola, firma_id, ime, prezime, email, telefon, lozinka, lozinka_tekst, boja_markera, aktivan)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ");
+        $stmt->execute([$rola_id, $rola_kod, $firma_id, $ime, $prezime, $email, $telefon, $hash, $lozinkaPlain, $boja_markera, $aktivan]);
+        $newId = $conn->lastInsertId();
+
+        // Ako radnik pripada firmi, osiguraj unos u majstori_lokacija
+        if ($firma_id > 0) {
+            $chkMl = $conn->prepare("SELECT id FROM majstori_lokacija WHERE majstor_id = ? LIMIT 1");
+            $chkMl->execute([$newId]);
+            if (!$chkMl->fetch()) {
+                $conn->prepare("INSERT INTO majstori_lokacija (majstor_id, firma_id, status, poslednje_azuriranje) VALUES (?, ?, 'SLOBODAN', NOW())")->execute([$newId, $firma_id]);
+            }
+        }
+
+        sendResponse('success', [
+            "id" => $newId,
+            "poruka" => "Novi korisnik je uspešno kreiran sa dodeljenom rolom ID: {$rola_id} ({$rola_kod})."
+        ]);
+    }
+}
+
+// ==========================================================
+// 16. BRISANJE KORISNIKA (DELETE_USER)
+// ==========================================================
+elseif ($action === 'delete_user') {
+    $user_id = isset($inputData['user_id']) ? intval($inputData['user_id']) : 0;
+    if ($user_id <= 0) {
+        sendResponse('error', 'ID korisnika je obavezan.', 400);
+    }
+
+    $chk = $conn->prepare("SELECT id, rola_id, rola, email, ime, prezime FROM korisnici WHERE id = ?");
+    $chk->execute([$user_id]);
+    $u = $chk->fetch();
+    if (!$u) {
+        sendResponse('error', 'Korisnik nije pronađen.', 404);
+    }
+    if ($u['rola_id'] == 1 || $u['rola'] === 'superadmin' || $u['email'] === 'admin@majstornalog.rs') {
+        sendResponse('error', 'Nije dozvoljeno brisanje glavnog SuperAdmin naloga.', 400);
+    }
+
+    // Obrisi lokaciju i reference radnika
+    $conn->prepare("DELETE FROM majstori_lokacija WHERE majstor_id = ?")->execute([$user_id]);
+    $conn->prepare("DELETE FROM korisnici WHERE id = ?")->execute([$user_id]);
+    sendResponse('success', ["poruka" => "Korisnik '{$u['ime']} {$u['prezime']}' je uspešno obrisan."]);
+}
+
+// ==========================================================
+// 17. JAVNA REGISTRACIJA NOVOG KORISNIKA (REGISTER)
+// ==========================================================
+elseif ($action === 'register') {
+    $ime = isset($inputData['ime']) ? trim($inputData['ime']) : '';
+    $prezime = isset($inputData['prezime']) ? trim($inputData['prezime']) : '';
+    $email = isset($inputData['email']) ? trim($inputData['email']) : '';
+    $telefon = isset($inputData['telefon']) ? trim($inputData['telefon']) : '';
+    $lozinka = isset($inputData['lozinka']) ? trim($inputData['lozinka']) : '';
+
+    if (empty($ime) || empty($email) || empty($lozinka)) {
+        sendResponse('error', 'Ime, email i lozinka su obavezna polja za registraciju.', 400);
+    }
+
+    $chkEmail = $conn->prepare("SELECT id FROM korisnici WHERE email = ? LIMIT 1");
+    $chkEmail->execute([$email]);
+    if ($chkEmail->fetch()) {
+        sendResponse('error', 'Korisnički nalog sa ovom email adresom već postoji.', 400);
+    }
+
+    $hash = password_hash($lozinka, PASSWORD_DEFAULT);
+    // Svaki novi registrovani korisnik dobija rola_id = 3 (Običan korisnik) i firma_id = NULL
+    $stmt = $conn->prepare("
+        INSERT INTO korisnici (rola_id, rola, firma_id, ime, prezime, email, telefon, lozinka, lozinka_tekst, aktivan)
+        VALUES (3, 'korisnik', NULL, ?, ?, ?, ?, ?, ?, 1)
+    ");
+    $stmt->execute([$ime, $prezime, $email, $telefon, $hash, $lozinka]);
+    $newId = $conn->lastInsertId();
+
+    sendResponse('success', [
+        "id" => $newId,
+        "poruka" => "Registracija je uspešna! Vaš nalog je kreiran kao običan korisnik (ID role 3). SuperAdministrator će Vam dodeliti ulogu i servis pre nego što se prijavite."
+    ]);
 }
 
 else {

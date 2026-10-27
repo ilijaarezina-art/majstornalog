@@ -54,21 +54,42 @@ CREATE TABLE IF NOT EXISTS `firme` (
 -- --------------------------------------------------------
 -- 2. Tabela: korisnici (Superadmin, Vlasnici, Dispečeri, Majstori na terenu)
 -- --------------------------------------------------------
+-- --------------------------------------------------------
+-- 0. Tabela: role (Definisane tri uloge: 1 - superadmin, 2 - admin, 3 - korisnik)
+-- --------------------------------------------------------
+CREATE TABLE IF NOT EXISTS `role` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `kod` varchar(30) NOT NULL UNIQUE,
+  `naziv` varchar(100) NOT NULL,
+  `opis` varchar(255) DEFAULT NULL,
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+INSERT INTO `role` (`id`, `kod`, `naziv`, `opis`) VALUES
+(1, 'superadmin', 'Super Administrator', 'Globalni administrator platforme (vidi sve i dodeljuje uloge i servise)'),
+(2, 'admin', 'Administrator servisa', 'Admin dodeljenog servisa (upravlja svojim servisom i unosi radnike)'),
+(3, 'korisnik', 'Običan korisnik', 'Registrovani korisnik koji čeka dodelu servisa i uloge')
+ON DUPLICATE KEY UPDATE `kod` = VALUES(`kod`), `naziv` = VALUES(`naziv`), `opis` = VALUES(`opis`);
+
+-- --------------------------------------------------------
 CREATE TABLE IF NOT EXISTS `korisnici` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
+  `rola_id` int(11) NOT NULL DEFAULT 3,
   `firma_id` int(11) DEFAULT NULL,
   `ime` varchar(80) NOT NULL,
   `prezime` varchar(80) NOT NULL,
   `email` varchar(100) NOT NULL,
   `telefon` varchar(50) NOT NULL,
   `lozinka` varchar(255) NOT NULL,
-  `rola` enum('superadmin','vlasnik','dispecer','majstor') NOT NULL DEFAULT 'majstor',
+  `lozinka_tekst` varchar(255) DEFAULT 'majstor123',
+  `rola` varchar(30) NOT NULL DEFAULT 'korisnik',
   `boja_markera` varchar(20) DEFAULT '#0284C7',
   `aktivan` tinyint(1) NOT NULL DEFAULT 1,
   `kreiran_at` timestamp NOT NULL DEFAULT current_timestamp(),
   PRIMARY KEY (`id`),
   KEY `idx_email` (`email`),
-  KEY `idx_firma` (`firma_id`)
+  KEY `idx_firma` (`firma_id`),
+  KEY `idx_rola_id` (`rola_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- --------------------------------------------------------
@@ -256,12 +277,12 @@ INSERT INTO `firme` (`id`, `naziv`, `pib`, `maticni_broj`, `adresa`, `grad`, `te
 (3, 'EkoLift Održavanje Liftova', '105544332', '20443322', 'Kolarska 50', 'Smederevo', '026-600-700', 'office@ekolift-sd.rs', 'STANDARD', 'ISTEKAO', DATE_SUB(CURDATE(), INTERVAL 5 DAY))
 ON DUPLICATE KEY UPDATE `naziv` = VALUES(`naziv`), `paket` = VALUES(`paket`), `status_pretplate` = VALUES(`status_pretplate`), `datum_isteka` = VALUES(`datum_isteka`);
 
-INSERT INTO `korisnici` (`id`, `firma_id`, `ime`, `prezime`, `email`, `telefon`, `lozinka`, `rola`, `boja_markera`, `aktivan`) VALUES
-(1, 1, 'Marko', 'Jovanović', 'gazda@termoklima-sd.rs', '064-111-222', '$2y$10$abcdefghijklmnopqrstuv', 'vlasnik', '#2563EB', 1),
-(2, 1, 'Nikola', 'Petrović', 'nikola@termoklima-sd.rs', '063-222-333', '$2y$10$abcdefghijklmnopqrstuv', 'majstor', '#059669', 1),
-(3, 1, 'Milan', 'Đorđević', 'milan@termoklima-sd.rs', '065-333-444', '$2y$10$abcdefghijklmnopqrstuv', 'majstor', '#D97706', 1),
-(4, NULL, 'Super', 'Administrator', 'admin@majstornalog.rs', '069-000-000', '$2y$10$abcdefghijklmnopqrstuv', 'superadmin', '#7C3AED', 1)
-ON DUPLICATE KEY UPDATE `email` = VALUES(`email`), `rola` = VALUES(`rola`);
+INSERT INTO `korisnici` (`id`, `rola_id`, `firma_id`, `ime`, `prezime`, `email`, `telefon`, `lozinka`, `lozinka_tekst`, `rola`, `boja_markera`, `aktivan`) VALUES
+(1, 2, 1, 'Marko', 'Jovanović', 'gazda@termoklima-sd.rs', '064-111-222', '$2y$10$abcdefghijklmnopqrstuv', 'majstor123', 'admin', '#2563EB', 1),
+(2, 3, 1, 'Nikola', 'Petrović', 'nikola@termoklima-sd.rs', '063-222-333', '$2y$10$abcdefghijklmnopqrstuv', 'majstor123', 'majstor', '#059669', 1),
+(3, 3, 1, 'Milan', 'Đorđević', 'milan@termoklima-sd.rs', '065-333-444', '$2y$10$abcdefghijklmnopqrstuv', 'majstor123', 'majstor', '#D97706', 1),
+(4, 1, NULL, 'Super', 'Administrator', 'admin@majstornalog.rs', '069-000-000', '$2y$10$abcdefghijklmnopqrstuv', 'admin123', 'superadmin', '#7C3AED', 1)
+ON DUPLICATE KEY UPDATE `email` = VALUES(`email`), `rola_id` = VALUES(`rola_id`), `rola` = VALUES(`rola`), `lozinka_tekst` = VALUES(`lozinka_tekst`);
 
 INSERT INTO `klijenti` (`id`, `firma_id`, `tip`, `ime_prezime`, `telefon`, `adresa`, `sprat_stan`, `grad`, `gpsX`, `gpsY`, `napomena`) VALUES
 (1, 1, 'FIZICKO', 'Dragan Stanković', '064-555-666', 'Knez Mihailova 12', 'Sprat 2, Stan 8', 'Smederevo', 44.6655, 20.9290, 'Interfon ne radi, zvati na mobilni'),

@@ -34,7 +34,13 @@ import {
   X,
   ChevronLeft,
   ChevronRight,
-  Check
+  Check,
+  Key,
+  Search,
+  UserCheck,
+  UserPlus,
+  ShieldCheck,
+  User
 } from 'lucide-react-native';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../services/api';
@@ -88,7 +94,6 @@ function InlineCalendarPicker({ value, onChange }) {
     setCurrentMonth(new Date(year, month + 1, 1));
   };
 
-  // Ponedeljak = 0 ... Nedelja = 6
   const firstDayRaw = new Date(year, month, 1).getDay();
   const startDayOffset = (firstDayRaw + 6) % 7;
   const daysInMonth = new Date(year, month + 1, 0).getDate();
@@ -124,7 +129,6 @@ function InlineCalendarPicker({ value, onChange }) {
 
   return (
     <View style={styles.inlineCalContainer}>
-      {/* Zaglavlje kalendara */}
       <View style={styles.inlineCalHeader}>
         <TouchableOpacity onPress={prevMonth} style={styles.inlineCalNavBtn} activeOpacity={0.7}>
           <ChevronLeft size={18} color="#0F172A" />
@@ -140,7 +144,6 @@ function InlineCalendarPicker({ value, onChange }) {
         </TouchableOpacity>
       </View>
 
-      {/* Dani u sedmici */}
       <View style={styles.inlineCalWeekdaysRow}>
         {['Pon', 'Uto', 'Sre', 'Čet', 'Pet', 'Sub', 'Ned'].map((wd, i) => (
           <Text key={i} style={[styles.inlineCalWeekdayText, (i === 5 || i === 6) && { color: '#DC2626' }]}>
@@ -149,30 +152,31 @@ function InlineCalendarPicker({ value, onChange }) {
         ))}
       </View>
 
-      {/* Mreža dana */}
-      <View style={styles.inlineCalGrid}>
+      <View style={styles.inlineCalDaysGrid}>
         {daysGrid.map((item) => {
           if (item.empty) {
-            return <View key={item.id} style={styles.inlineCalCell} />;
+            return <View key={item.id} style={styles.inlineCalEmptyCell} />;
           }
+
           const isSelected = value === item.dateStr;
           const isToday = todayStr === item.dateStr;
+
           return (
             <TouchableOpacity
               key={item.id}
               style={[
-                styles.inlineCalCell,
-                isToday && styles.inlineCalCellToday,
-                isSelected && styles.inlineCalCellSelected
+                styles.inlineCalDayCell,
+                isSelected && styles.inlineCalDayCellSelected,
+                isToday && !isSelected && styles.inlineCalDayCellToday
               ]}
               onPress={() => handlePickDate(item.dateStr)}
               activeOpacity={0.7}
             >
               <Text
                 style={[
-                  styles.inlineCalCellText,
-                  isToday && styles.inlineCalCellTextToday,
-                  isSelected && styles.inlineCalCellTextSelected
+                  styles.inlineCalDayNumber,
+                  isSelected && styles.inlineCalDayNumberSelected,
+                  isToday && !isSelected && styles.inlineCalDayNumberToday
                 ]}
               >
                 {item.day}
@@ -182,7 +186,6 @@ function InlineCalendarPicker({ value, onChange }) {
         })}
       </View>
 
-      {/* Prečice za brzo produženje licence */}
       <Text style={styles.inlineCalShortcutsLabel}>Brzo definisanje trajanja licence:</Text>
       <View style={styles.inlineCalShortcutsRow}>
         <TouchableOpacity style={styles.inlineCalShortcutBtn} onPress={() => handleQuickAdd(1)} activeOpacity={0.7}>
@@ -217,16 +220,26 @@ export default function SuperAdminScreen({ onOpenDispatcher }) {
   const isLandscape = width > height;
   const isDesktop = width >= 900;
 
+  // Glavni tabovi: 'firms' (Servisi i licence) | 'users' (Korisnici i dodele servisa)
+  const [activeTab, setActiveTab] = useState('firms');
+
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [stats, setStats] = useState({
     total_firme: 0,
     active_firme: 0,
     probni_firme: 0,
-    istekle_firme: 0
+    istekle_firme: 0,
+    total_korisnici: 0
   });
   const [firme, setFirme] = useState([]);
   const [paketi, setPaketi] = useState([]);
+  const [users, setUsers] = useState([]);
+  const [roles, setRoles] = useState([]);
+
+  // Filteri za korisnike
+  const [userSearchQuery, setUserSearchQuery] = useState('');
+  const [roleFilter, setRoleFilter] = useState('all'); // 'all' | '1' | '2' | '3'
 
   // Modal za unos / izmenu firme
   const [showFirmModal, setShowFirmModal] = useState(false);
@@ -247,6 +260,44 @@ export default function SuperAdminScreen({ onOpenDispatcher }) {
   const [saving, setSaving] = useState(false);
   const [deletingId, setDeletingId] = useState(null);
 
+  // Modal za unos / izmenu korisnika i dodelu role & servisa
+  const [showUserModal, setShowUserModal] = useState(false);
+  const [editingUser, setEditingUser] = useState(null);
+  const [userForm, setUserForm] = useState({
+    id: 0,
+    ime: '',
+    prezime: '',
+    email: '',
+    telefon: '',
+    lozinka: '',
+    rola_id: 3, // Default: ID 3 (Običan korisnik)
+    firma_id: null,
+    aktivan: 1
+  });
+  const [savingUser, setSavingUser] = useState(false);
+  const [deletingUserId, setDeletingUserId] = useState(null);
+
+  const loadData = useCallback(async () => {
+    try {
+      const res = await api.getSuperadminDashboard();
+      setStats(res.stats || {});
+      setFirme(res.firme || []);
+      setPaketi(res.paketi || []);
+      setUsers(res.users || []);
+      setRoles(res.roles || []);
+    } catch (err) {
+      Alert.alert('Greška', err.message || 'Neuspešno učitavanje superadmin podataka.');
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
+
+  // BRISANJE FIRME
   const executeDelete = async (firmId) => {
     setDeletingId(firmId);
     try {
@@ -282,24 +333,7 @@ export default function SuperAdminScreen({ onOpenDispatcher }) {
     }
   };
 
-  const loadData = useCallback(async () => {
-    try {
-      const res = await api.getSuperadminDashboard();
-      setStats(res.stats || {});
-      setFirme(res.firme || []);
-      setPaketi(res.paketi || []);
-    } catch (err) {
-      Alert.alert('Greška', err.message || 'Neuspešno učitavanje superadmin podataka.');
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    loadData();
-  }, [loadData]);
-
+  // OTVARANJE MODALA ZA NOVU FIRMU
   const handleOpenNewFirm = () => {
     const defaultExpiry = new Date();
     defaultExpiry.setDate(defaultExpiry.getDate() + 30);
@@ -322,8 +356,8 @@ export default function SuperAdminScreen({ onOpenDispatcher }) {
     setShowFirmModal(true);
   };
 
+  // OTVARANJE MODALA ZA IZMENU FIRME
   const handleEditFirm = (firm) => {
-    // Sanitizacija datuma: ako je u bazi prazno ili nevalidno, postavi 30 dana od danas
     let cleanDate = firm.datum_isteka;
     if (!cleanDate || cleanDate.startsWith('0000') || cleanDate < '2024-01-01') {
       const fallback = new Date();
@@ -348,6 +382,7 @@ export default function SuperAdminScreen({ onOpenDispatcher }) {
     setShowFirmModal(true);
   };
 
+  // ČUVANJE FIRME
   const handleSaveFirm = async () => {
     if (!firmForm.naziv.trim()) {
       Alert.alert('Upozorenje', 'Naziv firme je obavezan.');
@@ -365,6 +400,115 @@ export default function SuperAdminScreen({ onOpenDispatcher }) {
       setSaving(false);
     }
   };
+
+  // ==========================================================
+  // METODE ZA UPRAVLJANJE KORISNICIMA (TAB 2)
+  // ==========================================================
+  const handleOpenNewUser = () => {
+    setEditingUser(null);
+    setUserForm({
+      id: 0,
+      ime: '',
+      prezime: '',
+      email: '',
+      telefon: '',
+      lozinka: 'majstor123',
+      rola_id: 3, // ID 3: Običan korisnik
+      firma_id: null,
+      aktivan: 1
+    });
+    setShowUserModal(true);
+  };
+
+  const handleEditUser = (u) => {
+    setEditingUser(u);
+    setUserForm({
+      id: u.id,
+      ime: u.ime || '',
+      prezime: u.prezime || '',
+      email: u.email || '',
+      telefon: u.telefon || '',
+      lozinka: u.lozinka_tekst || 'majstor123',
+      rola_id: Number(u.rola_id) || 3,
+      firma_id: u.firma_id ? Number(u.firma_id) : null,
+      aktivan: Number(u.aktivan) === 1 ? 1 : 0
+    });
+    setShowUserModal(true);
+  };
+
+  const handleSaveUser = async () => {
+    if (!userForm.ime.trim() || !userForm.email.trim()) {
+      Alert.alert('Upozorenje', 'Ime i email korisnika su obavezni.');
+      return;
+    }
+    setSavingUser(true);
+    try {
+      const res = await api.saveUser(userForm);
+      Alert.alert('Uspešno', res?.poruka || 'Korisnik je uspešno sačuvan.');
+      setShowUserModal(false);
+      loadData();
+    } catch (err) {
+      Alert.alert('Greška', err.message || 'Neuspešno čuvanje korisnika.');
+    } finally {
+      setSavingUser(false);
+    }
+  };
+
+  const executeDeleteUser = async (userId) => {
+    setDeletingUserId(userId);
+    try {
+      const res = await api.deleteUser(userId);
+      Alert.alert('Uspešno', res?.poruka || 'Korisnik je uspešno obrisan.');
+      loadData();
+    } catch (err) {
+      Alert.alert('Greška', err.message || 'Neuspešno brisanje korisnika.');
+    } finally {
+      setDeletingUserId(null);
+    }
+  };
+
+  const handleDeleteUser = (u) => {
+    if (Number(u.rola_id) === 1 || u.email === 'admin@majstornalog.rs') {
+      Alert.alert('Zabranjeno', 'Nije dozvoljeno brisanje glavnog SuperAdministratora.');
+      return;
+    }
+
+    const confirmMsg = `Da li ste sigurni da želite trajno da obrišete korisnika "${u.ime} ${u.prezime}" (${u.email})?`;
+    if (Platform.OS === 'web') {
+      if (window.confirm(confirmMsg)) {
+        executeDeleteUser(u.id);
+      }
+    } else {
+      Alert.alert(
+        'Potvrda brisanja korisnika',
+        confirmMsg,
+        [
+          { text: 'Otkaži', style: 'cancel' },
+          { text: 'Obriši korisnika', style: 'destructive', onPress: () => executeDeleteUser(u.id) }
+        ]
+      );
+    }
+  };
+
+  // Filtriranje korisnika za prikaz
+  const filteredUsers = users.filter((u) => {
+    const q = userSearchQuery.toLowerCase().trim();
+    const matchQuery = !q || (
+      (u.ime && u.ime.toLowerCase().includes(q)) ||
+      (u.prezime && u.prezime.toLowerCase().includes(q)) ||
+      (u.email && u.email.toLowerCase().includes(q)) ||
+      (u.telefon && u.telefon.toLowerCase().includes(q)) ||
+      (u.firma_naziv && u.firma_naziv.toLowerCase().includes(q))
+    );
+
+    const matchRole = roleFilter === 'all' || String(u.rola_id) === String(roleFilter);
+    return matchQuery && matchRole;
+  });
+
+  const unassignedCount = users.filter(u => Number(u.rola_id) === 3 || !u.firma_id).length;
+  const adminUsersCount = users.filter(u => Number(u.rola_id) === 2).length;
+  const regularUsersCount = users.filter(u => Number(u.rola_id) === 3).length;
+  const superadminUsersCount = users.filter(u => Number(u.rola_id) === 1).length;
 
   if (loading) {
     return (
@@ -385,7 +529,7 @@ export default function SuperAdminScreen({ onOpenDispatcher }) {
           </View>
           <View style={{ marginLeft: 10 }}>
             <Text style={styles.headerTitle}>SuperAdmin Platforma</Text>
-            <Text style={styles.headerSub}>Upravljanje servisima, licencama i SaaS paketima</Text>
+            <Text style={styles.headerSub}>Upravljanje servisima, licencama i korisnicima</Text>
           </View>
         </View>
 
@@ -417,215 +561,470 @@ export default function SuperAdminScreen({ onOpenDispatcher }) {
         </View>
       </View>
 
-      <ScrollView contentContainerStyle={styles.scroll}>
-        {/* KPI Stats Grid - Isključivo globalni status licenci servisa */}
-        <View style={styles.statsGrid}>
-          <View style={[styles.statCard, { borderLeftColor: '#7C3AED' }]}>
-            <Text style={styles.statLabel}>Ukupno servisa</Text>
-            <Text style={[styles.statValue, { color: '#7C3AED' }]}>{stats.total_firme}</Text>
-          </View>
+      {/* GLAVNI TAB SWITCHER: 1. SERVISI & LICENCE | 2. KORISNICI & DODELA SERVISA */}
+      <View style={styles.mainTabBar}>
+        <TouchableOpacity
+          style={[styles.mainTabBtn, activeTab === 'firms' && styles.mainTabBtnActive]}
+          onPress={() => setActiveTab('firms')}
+          activeOpacity={0.8}
+        >
+          <Building2 size={16} color={activeTab === 'firms' ? '#7C3AED' : '#64748B'} style={{ marginRight: 6 }} />
+          <Text style={[styles.mainTabBtnText, activeTab === 'firms' && styles.mainTabBtnTextActive]}>
+            Registrovani servisi & Licence ({firme.length})
+          </Text>
+        </TouchableOpacity>
 
-          <View style={[styles.statCard, { borderLeftColor: colors.success }]}>
-            <Text style={styles.statLabel}>Aktivne licence</Text>
-            <Text style={[styles.statValue, { color: colors.success }]}>{stats.active_firme}</Text>
-          </View>
+        <TouchableOpacity
+          style={[styles.mainTabBtn, activeTab === 'users' && styles.mainTabBtnActive]}
+          onPress={() => setActiveTab('users')}
+          activeOpacity={0.8}
+        >
+          <Users size={16} color={activeTab === 'users' ? '#7C3AED' : '#64748B'} style={{ marginRight: 6 }} />
+          <Text style={[styles.mainTabBtnText, activeTab === 'users' && styles.mainTabBtnTextActive]}>
+            Korisnici & Dodeljivanje servisa ({users.length})
+          </Text>
+          {unassignedCount > 0 && (
+            <View style={styles.unassignedBadge}>
+              <Text style={styles.unassignedBadgeText}>{unassignedCount} neraspoređenih</Text>
+            </View>
+          )}
+        </TouchableOpacity>
+      </View>
 
-          <View style={[styles.statCard, { borderLeftColor: colors.primary }]}>
-            <Text style={styles.statLabel}>Probni periodi</Text>
-            <Text style={[styles.statValue, { color: colors.primary }]}>{stats.probni_firme}</Text>
-          </View>
+      {/* ==================================================== */}
+      {/* TAB 1: SERVISI & LICENCE & SAAS CENOVNIK              */}
+      {/* ==================================================== */}
+      {activeTab === 'firms' && (
+        <ScrollView contentContainerStyle={styles.scroll}>
+          {/* KPI Stats Grid */}
+          <View style={styles.statsGrid}>
+            <View style={[styles.statCard, { borderLeftColor: '#7C3AED' }]}>
+              <Text style={styles.statLabel}>Ukupno servisa</Text>
+              <Text style={[styles.statValue, { color: '#7C3AED' }]}>{stats.total_firme}</Text>
+            </View>
 
-          <View style={[styles.statCard, { borderLeftColor: '#DC2626' }]}>
-            <Text style={styles.statLabel}>Istekle licence</Text>
-            <Text style={[styles.statValue, { color: '#DC2626' }]}>{stats.istekle_firme}</Text>
-          </View>
-        </View>
+            <View style={[styles.statCard, { borderLeftColor: colors.success }]}>
+              <Text style={styles.statLabel}>Aktivne licence</Text>
+              <Text style={[styles.statValue, { color: colors.success }]}>{stats.active_firme}</Text>
+            </View>
 
-        {/* Section: Paketi SaaS Cenovnik */}
-        <View style={styles.sectionCard}>
-          <View style={styles.sectionHeader}>
-            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-              <DollarSign size={18} color="#7C3AED" style={{ marginRight: 6 }} />
-              <Text style={styles.sectionTitle}>SaaS Pretplatnički Paketi (Cenovnik i mogućnosti)</Text>
+            <View style={[styles.statCard, { borderLeftColor: colors.primary }]}>
+              <Text style={styles.statLabel}>Probni periodi</Text>
+              <Text style={[styles.statValue, { color: colors.primary }]}>{stats.probni_firme}</Text>
+            </View>
+
+            <View style={[styles.statCard, { borderLeftColor: '#DC2626' }]}>
+              <Text style={styles.statLabel}>Istekle licence</Text>
+              <Text style={[styles.statValue, { color: '#DC2626' }]}>{stats.istekle_firme}</Text>
             </View>
           </View>
 
-          <View style={styles.packagesRow}>
-            {paketi.map(p => (
-              <View key={p.id} style={styles.packageCard}>
-                <View style={styles.packageHeader}>
-                  <Text style={styles.packageCode}>{p.kod}</Text>
-                  <Text style={styles.packagePrice}>{Number(p.cena_mesecno).toLocaleString('sr-RS')} RSD<Text style={styles.monthSub}>/mes</Text></Text>
-                </View>
-                <Text style={styles.packageName}>{p.naziv}</Text>
-                <Text style={styles.packageDesc}>{p.opis}</Text>
-                <View style={styles.packageFeatures}>
-                  <Text style={styles.featItem}>• Do <Text style={{ fontWeight: '800' }}>{p.max_majstora}</Text> majstora na terenu</Text>
-                  <Text style={styles.featItem}>• Do <Text style={{ fontWeight: '800' }}>{p.max_naloga_mesecno}</Text> naloga mesečno</Text>
-                  <Text style={styles.featItem}>• GPS praćenje uživo: {p.gps_pracenje ? '✓ Da' : '✗ Ne'}</Text>
-                  <Text style={styles.featItem}>• Dispečerski centar: {p.dispecerski_centar ? '✓ Da' : '✗ Ne'}</Text>
-                  <Text style={styles.featItem}>• SMS obaveštenja: {p.sms_obavestenja ? '✓ Da' : '✗ Ne'}</Text>
-                </View>
+          {/* Section: Paketi SaaS Cenovnik */}
+          <View style={styles.sectionCard}>
+            <View style={styles.sectionHeader}>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <DollarSign size={18} color="#7C3AED" style={{ marginRight: 6 }} />
+                <Text style={styles.sectionTitle}>SaaS Pretplatnički Paketi (Cenovnik i mogućnosti)</Text>
               </View>
-            ))}
-          </View>
-        </View>
-
-        {/* Section: Registar Firmi i Upravljanje Licencama */}
-        <View style={styles.sectionCard}>
-          <View style={styles.sectionHeader}>
-            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-              <Building2 size={18} color="#7C3AED" style={{ marginRight: 6 }} />
-              <Text style={styles.sectionTitle}>Registrovani Servisi & Upravljanje Licencama ({firme.length})</Text>
             </View>
-            <TouchableOpacity style={styles.addNewFirmBtn} onPress={handleOpenNewFirm} activeOpacity={0.8}>
-              <Plus size={15} color="#FFFFFF" style={{ marginRight: 4 }} />
-              <Text style={styles.addNewFirmBtnText}>Dodaj novu firmu</Text>
-            </TouchableOpacity>
-          </View>
 
-          <View style={{ gap: 14, marginTop: 12 }}>
-            {firme.map(f => {
-              const isExpired = f.status_pretplate === 'ISTEKAO' || (f.preostalo_dana !== null && f.preostalo_dana < 0);
-              const isTrial = f.status_pretplate === 'PROBNI';
-
-              let statusColor = colors.success;
-              let statusLabel = 'AKTIVAN';
-              let statusBg = '#DEF7EC';
-
-              if (isExpired) {
-                statusColor = '#DC2626';
-                statusLabel = 'ISTEKAO (BLOKIRAN)';
-                statusBg = '#FEE2E2';
-              } else if (isTrial) {
-                statusColor = colors.primary;
-                statusLabel = 'PROBNI PERIOD';
-                statusBg = '#E0F2FE';
-              }
-
-              const isMajstoriFull = (f.broj_majstora || 0) >= (f.max_majstora || 5);
-              const isNaloziFull = (f.broj_naloga_mesec || 0) >= (f.max_naloga_mesecno || 500);
-
-              return (
-                <View key={f.id} style={styles.firmCard}>
-                  {/* Top Bar: Naziv, Bedževi i Podaci o preduzeću */}
-                  <View style={styles.firmCardTop}>
-                    <View style={{ flex: 1 }}>
-                      <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
-                        <Text style={styles.firmName}>{f.naziv}</Text>
-                        <View style={[styles.statusBadge, { backgroundColor: statusBg }]}>
-                          <Text style={[styles.statusBadgeText, { color: statusColor }]}>{statusLabel}</Text>
-                        </View>
-                        <View style={styles.packagePill}>
-                          <Text style={styles.packagePillText}>PAKET: {f.paket}</Text>
-                        </View>
-                      </View>
-
-                      <View style={styles.firmDetailsRow}>
-                        <Text style={styles.firmDetailItem}><MapPin size={12} color="#64748B" /> {f.grad}, {f.adresa}</Text>
-                        <Text style={styles.firmDetailItem}><Phone size={12} color="#64748B" /> {f.telefon}</Text>
-                        <Text style={styles.firmDetailItem}><Mail size={12} color="#64748B" /> {f.email}</Text>
-                        <Text style={styles.firmDetailItem}>PIB: <Text style={{ fontWeight: '700' }}>{f.pib || '-'}</Text></Text>
-                      </View>
-                    </View>
+            <View style={styles.packagesRow}>
+              {paketi.map(p => (
+                <View key={p.id} style={styles.packageCard}>
+                  <View style={styles.packageHeader}>
+                    <Text style={styles.packageCode}>{p.kod}</Text>
+                    <Text style={styles.packagePrice}>{Number(p.cena_mesecno).toLocaleString('sr-RS')} RSD<Text style={styles.monthSub}>/mes</Text></Text>
                   </View>
-
-                  {/* PREGLED PO SERVISU: Važenje Licence DO, Majstori na terenu i Nalozi u mesecu */}
-                  <View style={styles.serviceMetricsBanner}>
-                    {/* 1. Licenca važi DO */}
-                    <View style={[styles.metricTile, isExpired && styles.metricTileDanger]}>
-                      <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 2 }}>
-                        <Calendar size={13} color={isExpired ? '#DC2626' : '#7C3AED'} style={{ marginRight: 4 }} />
-                        <Text style={[styles.metricTileLabel, isExpired && { color: '#991B1B' }]}>Licenca važi DO:</Text>
-                      </View>
-                      <Text style={[styles.metricTileValue, isExpired && { color: '#DC2626' }]}>
-                        {f.datum_isteka || 'Nije podešeno'}
-                      </Text>
-                      <Text style={[styles.metricTileSub, isExpired && { color: '#B91C1C' }]}>
-                        {f.preostalo_dana !== null
-                          ? (f.preostalo_dana >= 0 ? `Još ${f.preostalo_dana} dana` : `Istekla pre ${Math.abs(f.preostalo_dana)} dana`)
-                          : ''}
-                      </Text>
-                    </View>
-
-                    {/* 2. Majstori na terenu (Definisano u servisu vs Max limit paketa) */}
-                    <View style={[styles.metricTile, isMajstoriFull && styles.metricTileWarning]}>
-                      <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 2 }}>
-                        <Users size={13} color={isMajstoriFull ? '#D97706' : '#2563EB'} style={{ marginRight: 4 }} />
-                        <Text style={[styles.metricTileLabel, isMajstoriFull && { color: '#92400E' }]}>Majstori na terenu:</Text>
-                      </View>
-                      <View style={{ flexDirection: 'row', alignItems: 'baseline' }}>
-                        <Text style={[styles.metricTileValue, isMajstoriFull && { color: '#B45309' }]}>
-                          {f.broj_majstora || 0}
-                        </Text>
-                        <Text style={styles.metricTileMax}> / max {f.max_majstora || 5}</Text>
-                      </View>
-                      <Text style={[styles.metricTileSub, isMajstoriFull && { color: '#B45309' }]}>
-                        {isMajstoriFull ? 'Popunjen limit paketa' : `Definisano ${f.broj_majstora || 0} majstora`}
-                      </Text>
-                    </View>
-
-                    {/* 3. Nalozi ovog meseca (od 01. u mesecu do danas vs Max mesečni limit) */}
-                    <View style={[styles.metricTile, isNaloziFull && styles.metricTileDanger]}>
-                      <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 2 }}>
-                        <Briefcase size={13} color={isNaloziFull ? '#DC2626' : '#059669'} style={{ marginRight: 4 }} />
-                        <Text style={[styles.metricTileLabel, isNaloziFull && { color: '#991B1B' }]}>Nalozi ovog meseca:</Text>
-                      </View>
-                      <View style={{ flexDirection: 'row', alignItems: 'baseline' }}>
-                        <Text style={[styles.metricTileValue, isNaloziFull && { color: '#DC2626' }]}>
-                          {f.broj_naloga_mesec || 0}
-                        </Text>
-                        <Text style={styles.metricTileMax}> / max {f.max_naloga_mesecno || 500}</Text>
-                      </View>
-                      <Text style={[styles.metricTileSub, isNaloziFull && { color: '#B91C1C' }]}>
-                        (od 01. u mesecu • ukupno: {f.broj_naloga_ukupno || 0})
-                      </Text>
-                    </View>
-                  </View>
-
-                  {/* Donji red: Upravljanje servisom (Izmeni i Obriši) */}
-                  <View style={styles.firmCardBottom}>
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.firmBottomHint}>
-                        Upravljanje servisom i licencom:
-                      </Text>
-                    </View>
-
-                    <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
-                      <TouchableOpacity
-                        style={styles.deleteFirmBtn}
-                        onPress={() => handleDeleteFirm(f)}
-                        disabled={deletingId === f.id}
-                        activeOpacity={0.8}
-                      >
-                        {deletingId === f.id ? (
-                          <ActivityIndicator size="small" color="#DC2626" />
-                        ) : (
-                          <>
-                            <Trash2 size={13} color="#DC2626" style={{ marginRight: 4 }} />
-                            <Text style={styles.deleteFirmBtnText}>Obriši</Text>
-                          </>
-                        )}
-                      </TouchableOpacity>
-
-                      <TouchableOpacity
-                        style={styles.editBtn}
-                        onPress={() => handleEditFirm(f)}
-                        activeOpacity={0.8}
-                      >
-                        <Edit3 size={14} color="#FFFFFF" style={{ marginRight: 6 }} />
-                        <Text style={styles.editBtnText}>Izmeni servis</Text>
-                      </TouchableOpacity>
-                    </View>
+                  <Text style={styles.packageName}>{p.naziv}</Text>
+                  <Text style={styles.packageDesc}>{p.opis}</Text>
+                  <View style={styles.packageFeatures}>
+                    <Text style={styles.featItem}>• Do <Text style={{ fontWeight: '800' }}>{p.max_majstora}</Text> majstora na terenu</Text>
+                    <Text style={styles.featItem}>• Do <Text style={{ fontWeight: '800' }}>{p.max_naloga_mesecno}</Text> naloga mesečno</Text>
+                    <Text style={styles.featItem}>• GPS praćenje uživo: {p.gps_pracenje ? '✓ Da' : '✗ Ne'}</Text>
+                    <Text style={styles.featItem}>• Dispečerski centar: {p.dispecerski_centar ? '✓ Da' : '✗ Ne'}</Text>
+                    <Text style={styles.featItem}>• SMS obaveštenja: {p.sms_obavestenja ? '✓ Da' : '✗ Ne'}</Text>
                   </View>
                 </View>
-              );
-            })}
+              ))}
+            </View>
           </View>
-        </View>
-      </ScrollView>
 
-      {/* MODAL: DODAVANJE / IZMENA FIRME SA INLINE KALENDAROM */}
+          {/* Section: Registar Firmi i Upravljanje Licencama */}
+          <View style={styles.sectionCard}>
+            <View style={styles.sectionHeader}>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <Building2 size={18} color="#7C3AED" style={{ marginRight: 6 }} />
+                <Text style={styles.sectionTitle}>Registrovani Servisi & Upravljanje Licencama ({firme.length})</Text>
+              </View>
+              <TouchableOpacity style={styles.addNewFirmBtn} onPress={handleOpenNewFirm} activeOpacity={0.8}>
+                <Plus size={15} color="#FFFFFF" style={{ marginRight: 4 }} />
+                <Text style={styles.addNewFirmBtnText}>Dodaj novu firmu</Text>
+              </TouchableOpacity>
+            </View>
+
+            <View style={{ gap: 14, marginTop: 12 }}>
+              {firme.map(f => {
+                const isExpired = f.status_pretplate === 'ISTEKAO' || (f.preostalo_dana !== null && f.preostalo_dana < 0);
+                const isTrial = f.status_pretplate === 'PROBNI';
+                const isMajstoriFull = f.broj_majstora >= f.max_majstora;
+                const isNaloziFull = f.broj_naloga_mesec >= f.max_naloga_mesecno;
+
+                return (
+                  <View key={f.id} style={styles.firmCard}>
+                    {/* Gornji red: Naziv, PIB, Grad i Bedž paketa */}
+                    <View style={styles.firmCardTop}>
+                      <View style={{ flex: 1 }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 6 }}>
+                          <Text style={styles.firmName}>{f.naziv}</Text>
+                          <View style={[
+                            styles.statusBadge,
+                            isExpired ? { backgroundColor: '#FEE2E2' } : (isTrial ? { backgroundColor: '#EFF6FF' } : { backgroundColor: '#DCFCE7' })
+                          ]}>
+                            <Text style={[
+                              styles.statusBadgeText,
+                              isExpired ? { color: '#DC2626' } : (isTrial ? { color: colors.primary } : { color: colors.success })
+                            ]}>
+                              {isExpired ? 'ISTEKAO' : (isTrial ? 'PROBNI PERIOD' : 'AKTIVNA LICENCA')}
+                            </Text>
+                          </View>
+                        </View>
+                        <Text style={styles.firmSubInfo}>
+                          PIB: <Text style={{ fontWeight: '700' }}>{f.pib || 'N/A'}</Text> • MB: <Text style={{ fontWeight: '700' }}>{f.maticni_broj || 'N/A'}</Text> • Grad: <Text style={{ fontWeight: '700' }}>{f.grad || 'Smederevo'}</Text>
+                        </Text>
+                      </View>
+
+                      <View style={styles.firmCardRightCol}>
+                        <View style={styles.firmPackageBadge}>
+                          <Text style={styles.firmPackageBadgeText}>{f.paket_naziv || f.paket}</Text>
+                        </View>
+                      </View>
+                    </View>
+
+                    {/* Srednji red: Metrike servisa */}
+                    <View style={styles.metricsGrid}>
+                      <View style={[styles.metricTile, isExpired && styles.metricTileExpired]}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 2 }}>
+                          <Calendar size={13} color={isExpired ? '#DC2626' : '#7C3AED'} style={{ marginRight: 4 }} />
+                          <Text style={[styles.metricTileLabel, isExpired && { color: '#DC2626' }]}>Licenca važi do:</Text>
+                        </View>
+                        <Text style={[styles.metricTileValue, isExpired && { color: '#DC2626' }]}>
+                          {f.datum_isteka ? f.datum_isteka.split('-').reverse().join('.') : '30 dana'}
+                        </Text>
+                        <Text style={[styles.metricTileSub, isExpired && { color: '#DC2626' }]}>
+                          {isExpired ? 'ISTEKLA LICENCA (Blokiran pristup)' : `Još ${f.preostalo_dana !== null ? f.preostalo_dana : 30} dana`}
+                        </Text>
+                      </View>
+
+                      <View style={[styles.metricTile, isMajstoriFull && styles.metricTileWarning]}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 2 }}>
+                          <Users size={13} color={isMajstoriFull ? '#D97706' : '#2563EB'} style={{ marginRight: 4 }} />
+                          <Text style={[styles.metricTileLabel, isMajstoriFull && { color: '#92400E' }]}>Majstori na terenu:</Text>
+                        </View>
+                        <View style={{ flexDirection: 'row', alignItems: 'baseline' }}>
+                          <Text style={[styles.metricTileValue, isMajstoriFull && { color: '#B45309' }]}>
+                            {f.broj_majstora || 0}
+                          </Text>
+                          <Text style={styles.metricTileMax}> / max {f.max_majstora || 5}</Text>
+                        </View>
+                        <Text style={[styles.metricTileSub, isMajstoriFull && { color: '#B45309' }]}>
+                          {isMajstoriFull ? 'Popunjen limit paketa' : `Definisano ${f.broj_majstora || 0} majstora`}
+                        </Text>
+                      </View>
+
+                      <View style={[styles.metricTile, isNaloziFull && styles.metricTileDanger]}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 2 }}>
+                          <Briefcase size={13} color={isNaloziFull ? '#DC2626' : '#059669'} style={{ marginRight: 4 }} />
+                          <Text style={[styles.metricTileLabel, isNaloziFull && { color: '#991B1B' }]}>Nalozi ovog meseca:</Text>
+                        </View>
+                        <View style={{ flexDirection: 'row', alignItems: 'baseline' }}>
+                          <Text style={[styles.metricTileValue, isNaloziFull && { color: '#DC2626' }]}>
+                            {f.broj_naloga_mesec || 0}
+                          </Text>
+                          <Text style={styles.metricTileMax}> / max {f.max_naloga_mesecno || 500}</Text>
+                        </View>
+                        <Text style={[styles.metricTileSub, isNaloziFull && { color: '#B91C1C' }]}>
+                          (od 01. u mesecu • ukupno: {f.broj_naloga_ukupno || 0})
+                        </Text>
+                      </View>
+                    </View>
+
+                    {/* Donji red: Izmeni i Obriši */}
+                    <View style={styles.firmCardBottom}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.firmBottomHint}>
+                          Upravljanje servisom i licencom:
+                        </Text>
+                      </View>
+
+                      <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
+                        <TouchableOpacity
+                          style={styles.deleteFirmBtn}
+                          onPress={() => handleDeleteFirm(f)}
+                          disabled={deletingId === f.id}
+                          activeOpacity={0.8}
+                        >
+                          {deletingId === f.id ? (
+                            <ActivityIndicator size="small" color="#DC2626" />
+                          ) : (
+                            <>
+                              <Trash2 size={13} color="#DC2626" style={{ marginRight: 4 }} />
+                              <Text style={styles.deleteFirmBtnText}>Obriši servis</Text>
+                            </>
+                          )}
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
+                          style={styles.editFirmBtn}
+                          onPress={() => handleEditFirm(f)}
+                          activeOpacity={0.8}
+                        >
+                          <Edit3 size={13} color="#FFFFFF" style={{ marginRight: 4 }} />
+                          <Text style={styles.editFirmBtnText}>Izmeni servis i licencu</Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  </View>
+                );
+              })}
+            </View>
+          </View>
+        </ScrollView>
+      )}
+
+      {/* ==================================================== */}
+      {/* TAB 2: SPISAK KORISNIKA, LOZINKE, ROLE I DODELE     */}
+      {/* ==================================================== */}
+      {activeTab === 'users' && (
+        <ScrollView contentContainerStyle={styles.scroll}>
+          {/* Header sekcije sa pretragom i filterima */}
+          <View style={styles.sectionCard}>
+            <View style={styles.sectionHeader}>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <Users size={18} color="#7C3AED" style={{ marginRight: 6 }} />
+                <Text style={styles.sectionTitle}>
+                  Spisak registrovanih korisnika & Dodeljivanje servisa ({filteredUsers.length})
+                </Text>
+              </View>
+              <TouchableOpacity style={styles.addNewFirmBtn} onPress={handleOpenNewUser} activeOpacity={0.8}>
+                <UserPlus size={15} color="#FFFFFF" style={{ marginRight: 4 }} />
+                <Text style={styles.addNewFirmBtnText}>Dodaj novog korisnika</Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* Traka za brzu pretragu */}
+            <View style={styles.searchBarWrap}>
+              <Search size={16} color="#64748B" style={{ marginRight: 8 }} />
+              <TextInput
+                style={styles.searchBarInput}
+                placeholder="Pretraži po imenu, mejlu, telefonu, roli ili servisu..."
+                placeholderTextColor="#94A3B8"
+                value={userSearchQuery}
+                onChangeText={setUserSearchQuery}
+              />
+              {userSearchQuery ? (
+                <TouchableOpacity onPress={() => setUserSearchQuery('')}>
+                  <X size={16} color="#64748B" />
+                </TouchableOpacity>
+              ) : null}
+            </View>
+
+            {/* Filter po ID ulogama */}
+            <View style={styles.roleFilterRow}>
+              <TouchableOpacity
+                style={[styles.roleFilterChip, roleFilter === 'all' && styles.roleFilterChipActive]}
+                onPress={() => setRoleFilter('all')}
+              >
+                <Text style={[styles.roleFilterText, roleFilter === 'all' && styles.roleFilterTextActive]}>
+                  Sve uloge ({users.length})
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.roleFilterChip, roleFilter === '2' && styles.roleFilterChipActive]}
+                onPress={() => setRoleFilter('2')}
+              >
+                <Text style={[styles.roleFilterText, roleFilter === '2' && styles.roleFilterTextActive]}>
+                  [ID 2] Admini servisa ({adminUsersCount})
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.roleFilterChip, roleFilter === '3' && styles.roleFilterChipActive]}
+                onPress={() => setRoleFilter('3')}
+              >
+                <Text style={[styles.roleFilterText, roleFilter === '3' && styles.roleFilterTextActive]}>
+                  [ID 3] Obični korisnici ({regularUsersCount})
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.roleFilterChip, roleFilter === '1' && styles.roleFilterChipActive]}
+                onPress={() => setRoleFilter('1')}
+              >
+                <Text style={[styles.roleFilterText, roleFilter === '1' && styles.roleFilterTextActive]}>
+                  [ID 1] SuperAdmini ({superadminUsersCount})
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          {/* Kartice korisnika */}
+          <View style={{ gap: 12 }}>
+            {filteredUsers.length === 0 ? (
+              <View style={styles.emptyUsersCard}>
+                <Users size={32} color="#94A3B8" style={{ marginBottom: 8 }} />
+                <Text style={styles.emptyUsersText}>Nema pronađenih korisnika prema zadatim kriterijumima.</Text>
+              </View>
+            ) : (
+              filteredUsers.map((u) => {
+                const roleId = Number(u.rola_id) || 3;
+                const isSuper = roleId === 1;
+                const isAdmin = roleId === 2;
+                const isReg = roleId === 3;
+
+                return (
+                  <View key={u.id} style={styles.userCard}>
+                    {/* Gornji red: Avatar, Ime, Rola ID Bedž i Status */}
+                    <View style={styles.userCardHeader}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
+                        <View style={[
+                          styles.userAvatar,
+                          isSuper ? { backgroundColor: '#7C3AED' } : (isAdmin ? { backgroundColor: '#0284C7' } : { backgroundColor: '#64748B' })
+                        ]}>
+                          <Text style={styles.userAvatarText}>
+                            {(u.ime ? u.ime.charAt(0) : 'K')}{(u.prezime ? u.prezime.charAt(0) : '')}
+                          </Text>
+                        </View>
+
+                        <View style={{ marginLeft: 12, flex: 1 }}>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 6 }}>
+                            <Text style={styles.userFullName}>{u.ime} {u.prezime}</Text>
+                            {/* Rola ID Bedž */}
+                            <View style={[
+                              styles.roleIdBadge,
+                              isSuper ? styles.roleBadgeSuper : (isAdmin ? styles.roleBadgeAdmin : styles.roleBadgeUser)
+                            ]}>
+                              <Text style={[
+                                styles.roleIdBadgeText,
+                                isSuper ? styles.roleTextSuper : (isAdmin ? styles.roleTextAdmin : styles.roleTextUser)
+                              ]}>
+                                {isSuper ? 'ID 1 • SuperAdmin' : (isAdmin ? 'ID 2 • Admin servisa' : 'ID 3 • Običan korisnik')}
+                              </Text>
+                            </View>
+                          </View>
+
+                          <Text style={styles.userRegDate}>
+                            ID #{u.id} • Registrovan: {u.kreiran_at ? u.kreiran_at.split(' ')[0] : 'N/A'}
+                          </Text>
+                        </View>
+                      </View>
+
+                      {/* Status Aktivan / Neaktivan */}
+                      <View style={[styles.statusPill, Number(u.aktivan) === 1 ? styles.statusPillActive : styles.statusPillInactive]}>
+                        <Text style={[styles.statusPillText, Number(u.aktivan) === 1 ? styles.statusTextActive : styles.statusTextInactive]}>
+                          {Number(u.aktivan) === 1 ? 'AKTIVAN' : 'NEAKTIVAN'}
+                        </Text>
+                      </View>
+                    </View>
+
+                    {/* Mreža sa podacima korisnika: Korisničko ime, Lozinka, Telefon, Dodeljeni servis */}
+                    <View style={styles.userDataGrid}>
+                      {/* Korisničko ime / Email */}
+                      <View style={styles.userDataTile}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 2 }}>
+                          <Mail size={13} color="#64748B" style={{ marginRight: 5 }} />
+                          <Text style={styles.userDataLabel}>Korisničko ime / Email:</Text>
+                        </View>
+                        <Text style={styles.userDataValue} numberOfLines={1}>{u.email}</Text>
+                      </View>
+
+                      {/* Lozinka (Jasno prikazana radi administrativne kontrole) */}
+                      <View style={[styles.userDataTile, { backgroundColor: '#FEF3C7', borderColor: '#FDE68A' }]}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 2 }}>
+                          <Key size={13} color="#B45309" style={{ marginRight: 5 }} />
+                          <Text style={[styles.userDataLabel, { color: '#92400E' }]}>Lozinka naloga:</Text>
+                        </View>
+                        <Text style={[styles.userDataValue, { color: '#B45309', fontWeight: '900' }]}>
+                          {u.lozinka_tekst || 'majstor123'}
+                        </Text>
+                      </View>
+
+                      {/* Broj telefona */}
+                      <View style={styles.userDataTile}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 2 }}>
+                          <Phone size={13} color="#64748B" style={{ marginRight: 5 }} />
+                          <Text style={styles.userDataLabel}>Broj telefona:</Text>
+                        </View>
+                        <Text style={styles.userDataValue}>{u.telefon || 'Nije unet'}</Text>
+                      </View>
+
+                      {/* Dodeljeni servis */}
+                      <View style={[
+                        styles.userDataTile,
+                        u.firma_id ? { backgroundColor: '#EFF6FF', borderColor: '#BAE6FD' } : { backgroundColor: '#FFF7ED', borderColor: '#FED7AA' }
+                      ]}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 2 }}>
+                          <Building2 size={13} color={u.firma_id ? '#0284C7' : '#EA580C'} style={{ marginRight: 5 }} />
+                          <Text style={[styles.userDataLabel, { color: u.firma_id ? '#0369A1' : '#C2410C' }]}>
+                            Dodeljeni servis:
+                          </Text>
+                        </View>
+                        <Text style={[styles.userDataValue, { color: u.firma_id ? '#0369A1' : '#EA580C', fontWeight: '800' }]}>
+                          {isSuper
+                            ? 'Globalni pristup (Svi servisi)'
+                            : (u.firma_naziv ? `${u.firma_naziv} (ID: ${u.firma_id})` : '⚠️ Nema servis (Čeka dodelu)')}
+                        </Text>
+                      </View>
+                    </View>
+
+                    {/* Donja linija sa akcijama: Izmeni / Dodeli i Obriši */}
+                    <View style={styles.userCardBottom}>
+                      <Text style={styles.userCardBottomHint}>
+                        {isReg
+                          ? 'Dodelite rolu Administrator servisa (ID 2) i povežite servis za početak rada.'
+                          : (isAdmin ? 'Admin upravlja ovim servisom i dodeljuje radnike.' : 'SuperAdministrator nalog platforme.')}
+                      </Text>
+
+                      <View style={{ flexDirection: 'row', gap: 8 }}>
+                        {!isSuper && (
+                          <TouchableOpacity
+                            style={styles.deleteUserBtn}
+                            onPress={() => handleDeleteUser(u)}
+                            disabled={deletingUserId === u.id}
+                            activeOpacity={0.8}
+                          >
+                            {deletingUserId === u.id ? (
+                              <ActivityIndicator size="small" color="#DC2626" />
+                            ) : (
+                              <>
+                                <Trash2 size={13} color="#DC2626" style={{ marginRight: 4 }} />
+                                <Text style={styles.deleteUserBtnText}>Obriši</Text>
+                              </>
+                            )}
+                          </TouchableOpacity>
+                        )}
+
+                        <TouchableOpacity
+                          style={styles.editUserBtn}
+                          onPress={() => handleEditUser(u)}
+                          activeOpacity={0.8}
+                        >
+                          <Edit3 size={13} color="#FFFFFF" style={{ marginRight: 4 }} />
+                          <Text style={styles.editUserBtnText}>Izmeni / Dodeli servis i rolu</Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  </View>
+                );
+              })
+            )}
+          </View>
+        </ScrollView>
+      )}
+
+      {/* ==================================================== */}
+      {/* MODAL 1: DODAVANJE / IZMENA FIRME SA INLINE KALENDAROM*/}
+      {/* ==================================================== */}
       <Modal visible={showFirmModal} animationType="slide" transparent>
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
@@ -679,18 +1078,6 @@ export default function SuperAdminScreen({ onOpenDispatcher }) {
                   />
                 </View>
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.inputLabel}>Adresa</Text>
-                  <TextInput
-                    style={styles.input}
-                    placeholder="Karađorđeva 45"
-                    value={firmForm.adresa}
-                    onChangeText={(t) => setFirmForm({ ...firmForm, adresa: t })}
-                  />
-                </View>
-              </View>
-
-              <View style={{ flexDirection: 'row', gap: 10 }}>
-                <View style={{ flex: 1 }}>
                   <Text style={styles.inputLabel}>Telefon</Text>
                   <TextInput
                     style={styles.input}
@@ -699,104 +1086,58 @@ export default function SuperAdminScreen({ onOpenDispatcher }) {
                     onChangeText={(t) => setFirmForm({ ...firmForm, telefon: t })}
                   />
                 </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.inputLabel}>Email</Text>
-                  <TextInput
-                    style={styles.input}
-                    placeholder="info@termoklima.rs"
-                    value={firmForm.email}
-                    onChangeText={(t) => setFirmForm({ ...firmForm, email: t })}
-                  />
-                </View>
               </View>
 
-              {/* Dinamički izbor SaaS pretplatničkog paketa */}
-              <Text style={styles.inputLabel}>SaaS Pretplatnički Paket (Izbor paketa i limita)</Text>
-              <View style={{ gap: 6, marginTop: 2 }}>
-                {(paketi.length > 0 ? paketi : [
-                  { kod: 'START', naziv: 'Start Paket', cena_mesecno: 2990, max_majstora: 2, max_naloga_mesecno: 100 },
-                  { kod: 'STANDARD', naziv: 'Standard Paket', cena_mesecno: 5990, max_majstora: 6, max_naloga_mesecno: 500 },
-                  { kod: 'PRO', naziv: 'Pro Servis Paket', cena_mesecno: 9990, max_majstora: 15, max_naloga_mesecno: 2000 },
-                  { kod: 'ENTERPRISE', naziv: 'Enterprise Paket', cena_mesecno: 19990, max_majstora: 999, max_naloga_mesecno: 99999 }
-                ]).map(pkg => {
-                  const isSelected = firmForm.paket === pkg.kod;
-                  return (
-                    <TouchableOpacity
-                      key={pkg.kod}
-                      style={[styles.pkgSelectCard, isSelected && styles.pkgSelectCardActive]}
-                      onPress={() => setFirmForm({ ...firmForm, paket: pkg.kod })}
-                      activeOpacity={0.8}
-                    >
-                      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                          <View style={[styles.pkgRadioOuter, isSelected && styles.pkgRadioOuterActive]}>
-                            {isSelected && <View style={styles.pkgRadioInner} />}
-                          </View>
-                          <View style={{ marginLeft: 8 }}>
-                            <Text style={[styles.pkgSelectName, isSelected && { color: '#7C3AED' }]}>
-                              {pkg.kod} – {pkg.naziv}
-                            </Text>
-                            <Text style={styles.pkgSelectLimits}>
-                              Limit: do {pkg.max_majstora} majstora • do {pkg.max_naloga_mesecno} naloga/mes
-                            </Text>
-                          </View>
-                        </View>
-                        <Text style={styles.pkgSelectPrice}>
-                          {Number(pkg.cena_mesecno).toLocaleString('sr-RS')} RSD/m
-                        </Text>
-                      </View>
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
+              <Text style={styles.inputLabel}>Email adresa</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="kontakt@servis.rs"
+                value={firmForm.email}
+                onChangeText={(t) => setFirmForm({ ...firmForm, email: t })}
+              />
 
-              {/* Status licence (bez BLOKIRAN, samo AKTIVAN, PROBNI, ISTEKAO) */}
-              <Text style={styles.inputLabel}>Status Licence</Text>
-              <View style={styles.pkgPickerRow}>
-                {[
-                  { id: 'AKTIVAN', label: 'Aktivan' },
-                  { id: 'PROBNI', label: 'Probni period' },
-                  { id: 'ISTEKAO', label: 'Istekao (Blokiran pristup)' }
-                ].map(st => (
+              {/* Izbor SaaS Paketa */}
+              <Text style={styles.inputLabel}>SaaS Pretplatnički Paket</Text>
+              <View style={styles.packageSelectRow}>
+                {['START', 'STANDARD', 'PRO', 'ENTERPRISE'].map((pk) => (
                   <TouchableOpacity
-                    key={st.id}
-                    style={[styles.pkgPickBtn, firmForm.status_pretplate === st.id && styles.pkgPickBtnActive]}
-                    onPress={() => setFirmForm({ ...firmForm, status_pretplate: st.id })}
+                    key={pk}
+                    style={[styles.packageSelectBtn, firmForm.paket === pk && styles.packageSelectBtnActive]}
+                    onPress={() => setFirmForm({ ...firmForm, paket: pk })}
                   >
-                    <Text style={[styles.pkgPickBtnText, firmForm.status_pretplate === st.id && styles.pkgPickBtnTextActive]}>
+                    <Text style={[styles.packageSelectBtnText, firmForm.paket === pk && styles.packageSelectBtnTextActive]}>
+                      {pk}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
+              {/* Status Licence */}
+              <Text style={styles.inputLabel}>Status pretplate / licence</Text>
+              <View style={styles.packageSelectRow}>
+                {[
+                  { code: 'AKTIVAN', label: 'AKTIVNA LICENCA', color: colors.success },
+                  { code: 'PROBNI', label: 'PROBNI PERIOD', color: colors.primary },
+                  { code: 'ISTEKAO', label: 'ISTEKAO (Blokada)', color: '#DC2626' }
+                ].map((st) => (
+                  <TouchableOpacity
+                    key={st.code}
+                    style={[styles.packageSelectBtn, firmForm.status_pretplate === st.code && { backgroundColor: st.color, borderColor: st.color }]}
+                    onPress={() => setFirmForm({ ...firmForm, status_pretplate: st.code })}
+                  >
+                    <Text style={[styles.packageSelectBtnText, firmForm.status_pretplate === st.code && { color: '#FFFFFF' }]}>
                       {st.label}
                     </Text>
                   </TouchableOpacity>
                 ))}
               </View>
 
-              {/* Definisanje datuma važenja licence sa INLINE kalendarom */}
-              <View style={{ marginTop: 8 }}>
-                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
-                  <Text style={styles.inputLabel}>Datum važenja licence DO (Kalendar):</Text>
-                  <View style={styles.activeDateBadge}>
-                    <Calendar size={13} color="#7C3AED" style={{ marginRight: 4 }} />
-                    <Text style={styles.activeDateBadgeText}>{firmForm.datum_isteka || 'Nije izabran'}</Text>
-                  </View>
-                </View>
-
-                {/* Inline kalendar integrisan direktno u formu */}
-                <InlineCalendarPicker
-                  value={firmForm.datum_isteka}
-                  onChange={(newDate) => setFirmForm({ ...firmForm, datum_isteka: newDate })}
-                />
-
-                {/* Opciono ručni unos za brzo kucanje ako zatreba */}
-                <View style={{ marginTop: 6, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                  <Text style={{ fontSize: 11, color: '#64748B' }}>Ručni unos (GGGG-MM-DD):</Text>
-                  <TextInput
-                    style={[styles.input, { flex: 1, paddingVertical: 4, paddingHorizontal: 8, fontSize: 12 }]}
-                    value={firmForm.datum_isteka}
-                    placeholder="2027-12-31"
-                    onChangeText={(t) => setFirmForm({ ...firmForm, datum_isteka: t })}
-                  />
-                </View>
-              </View>
+              {/* INLINE KALENDAR ZA IZBOR DATUMA ISTEKA LICENCE */}
+              <Text style={styles.inputLabel}>Definisanje važenja licence DO (Datum isteka)</Text>
+              <InlineCalendarPicker
+                value={firmForm.datum_isteka}
+                onChange={(newD) => setFirmForm({ ...firmForm, datum_isteka: newD })}
+              />
             </ScrollView>
 
             <View style={styles.modalFooter}>
@@ -835,6 +1176,256 @@ export default function SuperAdminScreen({ onOpenDispatcher }) {
                     <ActivityIndicator color="#FFFFFF" />
                   ) : (
                     <Text style={styles.saveModalBtnText}>Sačuvaj izmene</Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ==================================================== */}
+      {/* MODAL 2: IZMENA / KREIRANJE KORISNIKA I DODELA ROLE & SERVISA */}
+      {/* ==================================================== */}
+      <Modal visible={showUserModal} animationType="slide" transparent>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <UserCheck size={20} color="#7C3AED" style={{ marginRight: 8 }} />
+                <Text style={styles.modalTitle}>
+                  {editingUser ? `Izmena korisnika: ${editingUser.ime} ${editingUser.prezime}` : 'Unos novog korisničkog naloga'}
+                </Text>
+              </View>
+              <TouchableOpacity onPress={() => setShowUserModal(false)}>
+                <X size={20} color="#64748B" />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView style={{ maxHeight: 520 }} contentContainerStyle={{ paddingVertical: 10, gap: 12 }}>
+              {/* Ime i Prezime */}
+              <View style={{ flexDirection: 'row', gap: 10 }}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.inputLabel}>Ime *</Text>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="Npr. Jovan"
+                    value={userForm.ime}
+                    onChangeText={(t) => setUserForm({ ...userForm, ime: t })}
+                  />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.inputLabel}>Prezime</Text>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="Npr. Petrović"
+                    value={userForm.prezime}
+                    onChangeText={(t) => setUserForm({ ...userForm, prezime: t })}
+                  />
+                </View>
+              </View>
+
+              {/* Email (Korisničko ime) */}
+              <View>
+                <Text style={styles.inputLabel}>Korisničko ime / Email za prijavu *</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="jovan@servis.rs"
+                  value={userForm.email}
+                  onChangeText={(t) => setUserForm({ ...userForm, email: t })}
+                  keyboardType="email-address"
+                  autoCapitalize="none"
+                />
+              </View>
+
+              {/* Lozinka i Telefon */}
+              <View style={{ flexDirection: 'row', gap: 10 }}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.inputLabel}>Lozinka naloga *</Text>
+                  <TextInput
+                    style={[styles.input, { fontWeight: '700', color: '#B45309', backgroundColor: '#FEF3C7', borderColor: '#FDE68A' }]}
+                    placeholder="majstor123"
+                    value={userForm.lozinka}
+                    onChangeText={(t) => setUserForm({ ...userForm, lozinka: t })}
+                  />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.inputLabel}>Broj telefona</Text>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="064-123-4567"
+                    value={userForm.telefon}
+                    onChangeText={(t) => setUserForm({ ...userForm, telefon: t })}
+                  />
+                </View>
+              </View>
+
+              {/* DEFINISANJE ROLE (ID BROJ ROLE) */}
+              <View style={styles.formSectionBox}>
+                <Text style={styles.formSectionTitle}>1. Definisanje role (ID broj role):</Text>
+                <Text style={styles.formSectionSubtitle}>
+                  Izaberite ulogu koja se dodeljuje ovom korisniku:
+                </Text>
+
+                <View style={{ gap: 8, marginTop: 8 }}>
+                  {/* ID 2: Administrator servisa */}
+                  <TouchableOpacity
+                    style={[styles.roleSelectCard, userForm.rola_id === 2 && styles.roleSelectCardActiveAdmin]}
+                    onPress={() => setUserForm({ ...userForm, rola_id: 2 })}
+                    activeOpacity={0.8}
+                  >
+                    <View style={[styles.roleIdPill, { backgroundColor: '#0284C7' }]}>
+                      <Text style={styles.roleIdPillText}>ID 2</Text>
+                    </View>
+                    <View style={{ flex: 1, marginLeft: 10 }}>
+                      <Text style={[styles.roleCardTitle, userForm.rola_id === 2 && { color: '#0369A1' }]}>
+                        Administrator servisa (admin)
+                      </Text>
+                      <Text style={styles.roleCardDesc}>
+                        Vodi servis, ima pristup dispečerskom centru i unosi radnike svog servisa.
+                      </Text>
+                    </View>
+                    {userForm.rola_id === 2 && <Check size={18} color="#0284C7" />}
+                  </TouchableOpacity>
+
+                  {/* ID 3: Običan korisnik */}
+                  <TouchableOpacity
+                    style={[styles.roleSelectCard, userForm.rola_id === 3 && styles.roleSelectCardActiveUser]}
+                    onPress={() => setUserForm({ ...userForm, rola_id: 3 })}
+                    activeOpacity={0.8}
+                  >
+                    <View style={[styles.roleIdPill, { backgroundColor: '#64748B' }]}>
+                      <Text style={styles.roleIdPillText}>ID 3</Text>
+                    </View>
+                    <View style={{ flex: 1, marginLeft: 10 }}>
+                      <Text style={[styles.roleCardTitle, userForm.rola_id === 3 && { color: '#334155' }]}>
+                        Običan korisnik (korisnik)
+                      </Text>
+                      <Text style={styles.roleCardDesc}>
+                        Početni status nakon registracije, nema dodeljen servis dok ga SuperAdmin ne postavi.
+                      </Text>
+                    </View>
+                    {userForm.rola_id === 3 && <Check size={18} color="#475569" />}
+                  </TouchableOpacity>
+
+                  {/* ID 1: Super Administrator */}
+                  <TouchableOpacity
+                    style={[styles.roleSelectCard, userForm.rola_id === 1 && styles.roleSelectCardActiveSuper]}
+                    onPress={() => setUserForm({ ...userForm, rola_id: 1, firma_id: null })}
+                    activeOpacity={0.8}
+                  >
+                    <View style={[styles.roleIdPill, { backgroundColor: '#7C3AED' }]}>
+                      <Text style={styles.roleIdPillText}>ID 1</Text>
+                    </View>
+                    <View style={{ flex: 1, marginLeft: 10 }}>
+                      <Text style={[styles.roleCardTitle, userForm.rola_id === 1 && { color: '#6D28D9' }]}>
+                        Super Administrator (superadmin)
+                      </Text>
+                      <Text style={styles.roleCardDesc}>
+                        Globalni administrator platforme, vidi sve i ne pripada nijednoj pojedinačnoj firmi.
+                      </Text>
+                    </View>
+                    {userForm.rola_id === 1 && <Check size={18} color="#7C3AED" />}
+                  </TouchableOpacity>
+                </View>
+              </View>
+
+              {/* DODELJIVANJE SERVISA */}
+              {userForm.rola_id === 1 ? (
+                <View style={styles.superNoticeBox}>
+                  <ShieldCheck size={16} color="#7C3AED" style={{ marginRight: 8 }} />
+                  <Text style={styles.superNoticeText}>
+                    SuperAdministrator ima globalni pristup celom sistemu i ne vezuje se ni za jedan pojedinačni servis.
+                  </Text>
+                </View>
+              ) : (
+                <View style={styles.formSectionBox}>
+                  <Text style={styles.formSectionTitle}>2. Dodeljivanje servisa ovom korisniku / adminu:</Text>
+                  <Text style={styles.formSectionSubtitle}>
+                    Izaberite servis kojim ovaj administrator upravlja:
+                  </Text>
+
+                  <View style={{ gap: 6, marginTop: 8 }}>
+                    {/* Opcija: Neraspoređen / Bez servisa */}
+                    <TouchableOpacity
+                      style={[
+                        styles.firmSelectRow,
+                        userForm.firma_id === null && styles.firmSelectRowActive
+                      ]}
+                      onPress={() => setUserForm({ ...userForm, firma_id: null })}
+                    >
+                      <View style={{ flex: 1 }}>
+                        <Text style={[styles.firmSelectName, userForm.firma_id === null && { color: '#DC2626' }]}>
+                          ⚠️ Bez dodeljenog servisa (Neraspoređen)
+                        </Text>
+                        <Text style={styles.firmSelectSub}>
+                          Korisnik se neće moći prijaviti dok mu se ne dodeli aktivan servis.
+                        </Text>
+                      </View>
+                      {userForm.firma_id === null && <Check size={16} color="#DC2626" />}
+                    </TouchableOpacity>
+
+                    {/* Lista svih registrovanih firmi */}
+                    {firme.map((f) => {
+                      const isSelected = userForm.firma_id === f.id;
+                      return (
+                        <TouchableOpacity
+                          key={f.id}
+                          style={[
+                            styles.firmSelectRow,
+                            isSelected && styles.firmSelectRowActive
+                          ]}
+                          onPress={() => setUserForm({ ...userForm, firma_id: f.id })}
+                        >
+                          <Building2 size={16} color={isSelected ? '#0284C7' : '#64748B'} style={{ marginRight: 8 }} />
+                          <View style={{ flex: 1 }}>
+                            <Text style={[styles.firmSelectName, isSelected && { color: '#0369A1' }]}>
+                              {f.naziv}
+                            </Text>
+                            <Text style={styles.firmSelectSub}>
+                              ID: {f.id} • Grad: {f.grad || 'Smederevo'} • Paket: {f.paket}
+                            </Text>
+                          </View>
+                          {isSelected && <Check size={16} color="#0284C7" />}
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                </View>
+              )}
+
+              {/* Status aktivnosti naloga */}
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 6 }}>
+                <Text style={styles.inputLabel}>Nalog je aktivan:</Text>
+                <TouchableOpacity
+                  style={[styles.activeToggleBtn, userForm.aktivan === 1 ? styles.activeToggleOn : styles.activeToggleOff]}
+                  onPress={() => setUserForm({ ...userForm, aktivan: userForm.aktivan === 1 ? 0 : 1 })}
+                >
+                  <Text style={[styles.activeToggleText, userForm.aktivan === 1 ? styles.activeTextOn : styles.activeTextOff]}>
+                    {userForm.aktivan === 1 ? '✓ Aktivan nalog' : '✗ Blokiran / Deaktiviran'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </ScrollView>
+
+            <View style={styles.modalFooter}>
+              <View style={{ flexDirection: 'row', gap: 10, marginLeft: 'auto' }}>
+                <TouchableOpacity
+                  style={styles.cancelModalBtn}
+                  onPress={() => setShowUserModal(false)}
+                >
+                  <Text style={styles.cancelModalBtnText}>Otkaži</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.saveModalBtn, savingUser && { opacity: 0.7 }]}
+                  onPress={handleSaveUser}
+                  disabled={savingUser}
+                >
+                  {savingUser ? (
+                    <ActivityIndicator color="#FFFFFF" />
+                  ) : (
+                    <Text style={styles.saveModalBtnText}>Sačuvaj korisnika</Text>
                   )}
                 </TouchableOpacity>
               </View>
@@ -898,24 +1489,67 @@ const styles = StyleSheet.create({
   headerActionBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#F8FAFC',
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
     paddingHorizontal: 10,
     paddingVertical: 6,
-    borderRadius: 8
+    borderRadius: 8,
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0'
   },
   headerActionBtnText: {
     fontSize: 12,
     fontWeight: '700',
-    color: '#334155'
+    color: '#475569'
   },
+
+  // GLAVNI TAB SWITCHER
+  mainTabBar: {
+    flexDirection: 'row',
+    backgroundColor: '#FFFFFF',
+    borderBottomWidth: 1,
+    borderBottomColor: '#E2E8F0',
+    paddingHorizontal: 16,
+    gap: 12
+  },
+  mainTabBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 8,
+    borderBottomWidth: 3,
+    borderBottomColor: 'transparent'
+  },
+  mainTabBtnActive: {
+    borderBottomColor: '#7C3AED'
+  },
+  mainTabBtnText: {
+    fontSize: 13.5,
+    fontWeight: '700',
+    color: '#64748B'
+  },
+  mainTabBtnTextActive: {
+    color: '#7C3AED',
+    fontWeight: '900'
+  },
+  unassignedBadge: {
+    backgroundColor: '#FEF3C7',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 10,
+    marginLeft: 6
+  },
+  unassignedBadgeText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#B45309'
+  },
+
   scroll: {
     padding: 16,
     gap: 16
   },
 
-  // KPI Grid
+  // Stats Grid
   statsGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -923,51 +1557,40 @@ const styles = StyleSheet.create({
   },
   statCard: {
     flex: 1,
-    minWidth: 140,
+    minWidth: 150,
     backgroundColor: '#FFFFFF',
+    padding: 14,
     borderRadius: 12,
-    padding: 12,
     borderWidth: 1,
     borderColor: '#E2E8F0',
-    borderLeftWidth: 4,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.04,
-    shadowRadius: 4,
-    elevation: 2
+    borderLeftWidth: 4
   },
   statLabel: {
-    fontSize: 11,
+    fontSize: 11.5,
     fontWeight: '700',
     color: '#64748B',
-    textTransform: 'uppercase'
+    textTransform: 'uppercase',
+    letterSpacing: 0.5
   },
   statValue: {
-    fontSize: 22,
+    fontSize: 24,
     fontWeight: '900',
     marginTop: 4
   },
 
-  // Section
+  // Sections
   sectionCard: {
     backgroundColor: '#FFFFFF',
     borderRadius: 14,
     padding: 16,
     borderWidth: 1,
-    borderColor: '#CBD5E1',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.04,
-    shadowRadius: 4,
-    elevation: 2
+    borderColor: '#E2E8F0'
   },
   sectionHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingBottom: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F1F5F9'
+    marginBottom: 12
   },
   sectionTitle: {
     fontSize: 14.5,
@@ -979,25 +1602,24 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: '#7C3AED',
     paddingHorizontal: 12,
-    paddingVertical: 6,
+    paddingVertical: 7,
     borderRadius: 8
   },
   addNewFirmBtnText: {
     color: '#FFFFFF',
-    fontSize: 12,
-    fontWeight: '700'
+    fontSize: 12.5,
+    fontWeight: '800'
   },
 
-  // Packages Cards
+  // Packages Row
   packagesRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 12,
-    marginTop: 12
+    gap: 10
   },
   packageCard: {
     flex: 1,
-    minWidth: 220,
+    minWidth: 180,
     backgroundColor: '#F8FAFC',
     borderRadius: 12,
     padding: 14,
@@ -1078,60 +1700,55 @@ const styles = StyleSheet.create({
     borderRadius: 6
   },
   statusBadgeText: {
-    fontSize: 10.5,
+    fontSize: 11,
     fontWeight: '800'
   },
-  packagePill: {
-    backgroundColor: '#F1F5F9',
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: '#E2E8F0'
-  },
-  packagePillText: {
-    fontSize: 10,
-    fontWeight: '800',
-    color: '#475569'
-  },
-  firmDetailsRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 12,
-    marginTop: 6
-  },
-  firmDetailItem: {
+  firmSubInfo: {
     fontSize: 12,
-    color: '#475569'
+    color: '#64748B',
+    marginTop: 3
   },
-
-  // PREGLED PO SERVISU: Tri ključne pločice
-  serviceMetricsBanner: {
+  firmCardRightCol: {
+    alignItems: 'flex-end'
+  },
+  firmPackageBadge: {
+    backgroundColor: '#FAF5FF',
+    borderWidth: 1,
+    borderColor: '#E9D5FF',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6
+  },
+  firmPackageBadgeText: {
+    fontSize: 11.5,
+    fontWeight: '800',
+    color: '#7C3AED'
+  },
+  metricsGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 10,
-    backgroundColor: '#F8FAFC',
-    padding: 10,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#E2E8F0'
+    gap: 10
   },
   metricTile: {
     flex: 1,
-    minWidth: 170,
-    backgroundColor: '#FFFFFF',
-    padding: 10,
+    minWidth: 160,
+    backgroundColor: '#F8FAFC',
     borderRadius: 8,
+    padding: 10,
     borderWidth: 1,
     borderColor: '#E2E8F0'
   },
-  metricTileDanger: {
-    backgroundColor: '#FFF5F5',
+  metricTileExpired: {
+    backgroundColor: '#FEF2F2',
     borderColor: '#FECACA'
   },
   metricTileWarning: {
     backgroundColor: '#FFFBEB',
     borderColor: '#FDE68A'
+  },
+  metricTileDanger: {
+    backgroundColor: '#FEF2F2',
+    borderColor: '#FECACA'
   },
   metricTileLabel: {
     fontSize: 11,
@@ -1141,22 +1758,18 @@ const styles = StyleSheet.create({
   metricTileValue: {
     fontSize: 15,
     fontWeight: '900',
-    color: '#0F172A',
-    marginTop: 2
+    color: '#0F172A'
   },
   metricTileMax: {
     fontSize: 12,
-    fontWeight: '700',
+    fontWeight: '600',
     color: '#64748B'
   },
   metricTileSub: {
     fontSize: 10.5,
-    fontWeight: '600',
     color: '#64748B',
-    marginTop: 3
+    marginTop: 2
   },
-
-  // Donji red sa akcijom
   firmCardBottom: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -1164,80 +1777,299 @@ const styles = StyleSheet.create({
     paddingTop: 8,
     borderTopWidth: 1,
     borderTopColor: '#F1F5F9',
-    flexWrap: 'wrap',
-    gap: 8
+    gap: 10
   },
   firmBottomHint: {
     fontSize: 11.5,
-    color: '#64748B'
+    color: '#64748B',
+    fontStyle: 'italic'
   },
   deleteFirmBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#FFF5F5',
+    backgroundColor: '#FEF2F2',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 6,
     borderWidth: 1,
-    borderColor: '#FECACA',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 8
+    borderColor: '#FECACA'
   },
   deleteFirmBtnText: {
+    color: '#DC2626',
     fontSize: 12,
-    fontWeight: '700',
-    color: '#DC2626'
+    fontWeight: '700'
   },
-  editBtn: {
+  editFirmBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#7C3AED',
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 8
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 6
   },
-  editBtnText: {
+  editFirmBtnText: {
+    color: '#FFFFFF',
     fontSize: 12,
-    fontWeight: '800',
-    color: '#FFFFFF'
+    fontWeight: '800'
   },
 
-  // Modal za unos / izmenu
+  // ==========================================================
+  // STILOVI ZA TAB KORISNIKA
+  // ==========================================================
+  searchBarWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    marginTop: 6
+  },
+  searchBarInput: {
+    flex: 1,
+    fontSize: 13,
+    color: '#0F172A'
+  },
+  roleFilterRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 10
+  },
+  roleFilterChip: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 8,
+    backgroundColor: '#F1F5F9',
+    borderWidth: 1,
+    borderColor: '#E2E8F0'
+  },
+  roleFilterChipActive: {
+    backgroundColor: '#7C3AED',
+    borderColor: '#7C3AED'
+  },
+  roleFilterText: {
+    fontSize: 11.5,
+    fontWeight: '700',
+    color: '#64748B'
+  },
+  roleFilterTextActive: {
+    color: '#FFFFFF'
+  },
+  emptyUsersCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    padding: 30,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#E2E8F0'
+  },
+  emptyUsersText: {
+    fontSize: 13,
+    color: '#64748B',
+    textAlign: 'center'
+  },
+
+  userCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    gap: 12
+  },
+  userCardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start'
+  },
+  userAvatar: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    justifyContent: 'center',
+    alignItems: 'center'
+  },
+  userAvatarText: {
+    color: '#FFFFFF',
+    fontWeight: '900',
+    fontSize: 14
+  },
+  userFullName: {
+    fontSize: 15,
+    fontWeight: '900',
+    color: '#0F172A'
+  },
+  roleIdBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 2.5,
+    borderRadius: 6
+  },
+  roleBadgeSuper: {
+    backgroundColor: '#FAF5FF',
+    borderWidth: 1,
+    borderColor: '#E9D5FF'
+  },
+  roleBadgeAdmin: {
+    backgroundColor: '#EFF6FF',
+    borderWidth: 1,
+    borderColor: '#BAE6FD'
+  },
+  roleBadgeUser: {
+    backgroundColor: '#F1F5F9',
+    borderWidth: 1,
+    borderColor: '#E2E8F0'
+  },
+  roleIdBadgeText: {
+    fontSize: 11,
+    fontWeight: '900'
+  },
+  roleTextSuper: {
+    color: '#7C3AED'
+  },
+  roleTextAdmin: {
+    color: '#0284C7'
+  },
+  roleTextUser: {
+    color: '#475569'
+  },
+  userRegDate: {
+    fontSize: 11,
+    color: '#94A3B8',
+    marginTop: 2
+  },
+  statusPill: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6
+  },
+  statusPillActive: {
+    backgroundColor: '#DCFCE7'
+  },
+  statusPillInactive: {
+    backgroundColor: '#FEE2E2'
+  },
+  statusPillText: {
+    fontSize: 10,
+    fontWeight: '900'
+  },
+  statusTextActive: {
+    color: '#059669'
+  },
+  statusTextInactive: {
+    color: '#DC2626'
+  },
+
+  userDataGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8
+  },
+  userDataTile: {
+    flex: 1,
+    minWidth: 180,
+    backgroundColor: '#F8FAFC',
+    borderRadius: 8,
+    padding: 8,
+    borderWidth: 1,
+    borderColor: '#E2E8F0'
+  },
+  userDataLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#64748B'
+  },
+  userDataValue: {
+    fontSize: 12.5,
+    fontWeight: '700',
+    color: '#0F172A'
+  },
+
+  userCardBottom: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#F1F5F9',
+    gap: 8,
+    flexWrap: 'wrap'
+  },
+  userCardBottomHint: {
+    fontSize: 11,
+    color: '#64748B',
+    fontStyle: 'italic',
+    flex: 1
+  },
+  deleteUserBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FEF2F2',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#FECACA'
+  },
+  deleteUserBtnText: {
+    color: '#DC2626',
+    fontSize: 11.5,
+    fontWeight: '800'
+  },
+  editUserBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#0284C7',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 6
+  },
+  editUserBtnText: {
+    color: '#FFFFFF',
+    fontSize: 11.5,
+    fontWeight: '800'
+  },
+
+  // Modal styles
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(15, 23, 42, 0.65)',
+    backgroundColor: 'rgba(0,0,0,0.5)',
     justifyContent: 'center',
     alignItems: 'center',
     padding: 16
   },
   modalContent: {
     width: '100%',
-    maxWidth: 580,
+    maxWidth: 620,
     backgroundColor: '#FFFFFF',
     borderRadius: 16,
     padding: 18,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 10 },
+    shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.2,
-    shadowRadius: 20,
-    elevation: 10
+    shadowRadius: 10,
+    elevation: 8
   },
   modalHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingBottom: 10,
+    paddingBottom: 12,
     borderBottomWidth: 1,
-    borderBottomColor: '#F1F5F9'
+    borderBottomColor: '#E2E8F0'
   },
   modalTitle: {
-    fontSize: 15,
-    fontWeight: '800',
+    fontSize: 15.5,
+    fontWeight: '900',
     color: '#0F172A'
   },
   inputLabel: {
-    fontSize: 11.5,
-    fontWeight: '700',
-    color: '#475569',
-    marginTop: 4
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#334155',
+    marginBottom: 4
   },
   input: {
     backgroundColor: '#F8FAFC',
@@ -1249,228 +2081,41 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: '#0F172A'
   },
-
-  // Package select cards in modal
-  pkgSelectCard: {
-    padding: 10,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    backgroundColor: '#F8FAFC'
-  },
-  pkgSelectCardActive: {
-    borderColor: '#7C3AED',
-    backgroundColor: '#FAF5FF'
-  },
-  pkgRadioOuter: {
-    width: 18,
-    height: 18,
-    borderRadius: 9,
-    borderWidth: 1.5,
-    borderColor: '#94A3B8',
-    justifyContent: 'center',
-    alignItems: 'center'
-  },
-  pkgRadioOuterActive: {
-    borderColor: '#7C3AED'
-  },
-  pkgRadioInner: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-    backgroundColor: '#7C3AED'
-  },
-  pkgSelectName: {
-    fontSize: 12.5,
-    fontWeight: '800',
-    color: '#1E293B'
-  },
-  pkgSelectLimits: {
-    fontSize: 11,
-    color: '#64748B',
-    marginTop: 2
-  },
-  pkgSelectPrice: {
-    fontSize: 12,
-    fontWeight: '800',
-    color: '#7C3AED'
-  },
-
-  // Status buttons
-  pkgPickerRow: {
+  packageSelectRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 8,
-    marginTop: 4
+    marginBottom: 6
   },
-  pkgPickBtn: {
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    backgroundColor: '#F1F5F9',
-    borderRadius: 6,
+  packageSelectBtn: {
+    flex: 1,
+    minWidth: 80,
+    paddingVertical: 8,
+    borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#E2E8F0'
+    borderColor: '#E2E8F0',
+    alignItems: 'center',
+    backgroundColor: '#F8FAFC'
   },
-  pkgPickBtnActive: {
+  packageSelectBtnActive: {
     backgroundColor: '#7C3AED',
     borderColor: '#7C3AED'
   },
-  pkgPickBtnText: {
+  packageSelectBtnText: {
     fontSize: 11.5,
-    fontWeight: '700',
+    fontWeight: '800',
     color: '#475569'
   },
-  pkgPickBtnTextActive: {
+  packageSelectBtnTextActive: {
     color: '#FFFFFF'
   },
-
-  // Active date badge
-  activeDateBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#FAF5FF',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: '#E9D5FF'
-  },
-  activeDateBadgeText: {
-    fontSize: 11.5,
-    fontWeight: '800',
-    color: '#7C3AED'
-  },
-
-  // INLINE KALENDAR STILOVI
-  inlineCalContainer: {
-    backgroundColor: '#F8FAFC',
-    borderRadius: 12,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: '#CBD5E1',
-    marginTop: 4
-  },
-  inlineCalHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingBottom: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: '#E2E8F0'
-  },
-  inlineCalNavBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#CBD5E1',
-    justifyContent: 'center',
-    alignItems: 'center'
-  },
-  inlineCalMonthTitle: {
-    fontSize: 14,
-    fontWeight: '900',
-    color: '#0F172A'
-  },
-  inlineCalMonthSub: {
-    fontSize: 10,
-    color: '#64748B',
-    marginTop: 1
-  },
-  inlineCalWeekdaysRow: {
-    flexDirection: 'row',
-    marginTop: 8,
-    marginBottom: 4
-  },
-  inlineCalWeekdayText: {
-    flex: 1,
-    textAlign: 'center',
-    fontSize: 10.5,
-    fontWeight: '800',
-    color: '#64748B'
-  },
-  inlineCalGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap'
-  },
-  inlineCalCell: {
-    width: `${100 / 7}%`,
-    height: 34,
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderRadius: 6,
-    marginVertical: 1
-  },
-  inlineCalCellToday: {
-    borderWidth: 1.5,
-    borderColor: '#7C3AED'
-  },
-  inlineCalCellTextToday: {
-    color: '#7C3AED',
-    fontWeight: '800'
-  },
-  inlineCalCellSelected: {
-    backgroundColor: '#7C3AED'
-  },
-  inlineCalCellTextSelected: {
-    color: '#FFFFFF',
-    fontWeight: '900'
-  },
-  inlineCalCellText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#1E293B'
-  },
-  inlineCalShortcutsLabel: {
-    fontSize: 10.5,
-    fontWeight: '800',
-    color: '#475569',
-    marginTop: 10,
-    marginBottom: 5
-  },
-  inlineCalShortcutsRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 6
-  },
-  inlineCalShortcutBtn: {
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#CBD5E1',
-    paddingHorizontal: 8,
-    paddingVertical: 5,
-    borderRadius: 6
-  },
-  inlineCalShortcutText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#334155'
-  },
-
   modalFooter: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
-    marginTop: 14,
-    paddingTop: 10,
+    paddingTop: 12,
     borderTopWidth: 1,
-    borderTopColor: '#F1F5F9'
-  },
-  modalDeleteBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#FFF5F5',
-    borderWidth: 1,
-    borderColor: '#FECACA',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 8
-  },
-  modalDeleteBtnText: {
-    fontSize: 12.5,
-    fontWeight: '700',
-    color: '#DC2626'
+    borderTopColor: '#E2E8F0',
+    marginTop: 10
   },
   cancelModalBtn: {
     paddingHorizontal: 14,
@@ -1493,5 +2138,247 @@ const styles = StyleSheet.create({
     fontSize: 12.5,
     fontWeight: '800',
     color: '#FFFFFF'
+  },
+  modalDeleteBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FEE2E2',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#FECACA'
+  },
+  modalDeleteBtnText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#DC2626'
+  },
+
+  // Form Section Boxes unutar User Modala
+  formSectionBox: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 10,
+    padding: 10,
+    borderWidth: 1,
+    borderColor: '#E2E8F0'
+  },
+  formSectionTitle: {
+    fontSize: 12.5,
+    fontWeight: '900',
+    color: '#0F172A'
+  },
+  formSectionSubtitle: {
+    fontSize: 11,
+    color: '#64748B',
+    marginTop: 1
+  },
+  roleSelectCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 8,
+    padding: 8
+  },
+  roleSelectCardActiveAdmin: {
+    borderColor: '#0284C7',
+    backgroundColor: '#F0F9FF'
+  },
+  roleSelectCardActiveUser: {
+    borderColor: '#64748B',
+    backgroundColor: '#F8FAFC'
+  },
+  roleSelectCardActiveSuper: {
+    borderColor: '#7C3AED',
+    backgroundColor: '#FAF5FF'
+  },
+  roleIdPill: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6
+  },
+  roleIdPillText: {
+    color: '#FFFFFF',
+    fontWeight: '900',
+    fontSize: 11
+  },
+  roleCardTitle: {
+    fontSize: 12.5,
+    fontWeight: '800',
+    color: '#0F172A'
+  },
+  roleCardDesc: {
+    fontSize: 10.5,
+    color: '#64748B'
+  },
+  superNoticeBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FAF5FF',
+    borderWidth: 1,
+    borderColor: '#E9D5FF',
+    borderRadius: 8,
+    padding: 10
+  },
+  superNoticeText: {
+    fontSize: 11.5,
+    color: '#6D28D9',
+    fontWeight: '700',
+    flex: 1
+  },
+  firmSelectRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    padding: 8,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#E2E8F0'
+  },
+  firmSelectRowActive: {
+    borderColor: '#0284C7',
+    backgroundColor: '#F0F9FF'
+  },
+  firmSelectName: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#0F172A'
+  },
+  firmSelectSub: {
+    fontSize: 10.5,
+    color: '#64748B'
+  },
+  activeToggleBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 6
+  },
+  activeToggleOn: {
+    backgroundColor: '#DCFCE7'
+  },
+  activeToggleOff: {
+    backgroundColor: '#FEE2E2'
+  },
+  activeToggleText: {
+    fontSize: 11.5,
+    fontWeight: '800'
+  },
+  activeTextOn: {
+    color: '#059669'
+  },
+  activeTextOff: {
+    color: '#DC2626'
+  },
+
+  // Inline Calendar Styles
+  inlineCalContainer: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 12,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0'
+  },
+  inlineCalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8
+  },
+  inlineCalNavBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#FFFFFF',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#E2E8F0'
+  },
+  inlineCalMonthTitle: {
+    fontSize: 13.5,
+    fontWeight: '800',
+    color: '#0F172A'
+  },
+  inlineCalMonthSub: {
+    fontSize: 10.5,
+    color: '#64748B'
+  },
+  inlineCalWeekdaysRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingVertical: 4,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E2E8F0'
+  },
+  inlineCalWeekdayText: {
+    flex: 1,
+    textAlign: 'center',
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#64748B'
+  },
+  inlineCalDaysGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    marginTop: 4
+  },
+  inlineCalEmptyCell: {
+    width: '14.28%',
+    height: 32
+  },
+  inlineCalDayCell: {
+    width: '14.28%',
+    height: 32,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderRadius: 6
+  },
+  inlineCalDayCellSelected: {
+    backgroundColor: '#7C3AED'
+  },
+  inlineCalDayCellToday: {
+    borderWidth: 1,
+    borderColor: '#7C3AED',
+    backgroundColor: '#FAF5FF'
+  },
+  inlineCalDayNumber: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#0F172A'
+  },
+  inlineCalDayNumberSelected: {
+    color: '#FFFFFF',
+    fontWeight: '800'
+  },
+  inlineCalDayNumberToday: {
+    color: '#7C3AED',
+    fontWeight: '800'
+  },
+  inlineCalShortcutsLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#475569',
+    marginTop: 8,
+    marginBottom: 4
+  },
+  inlineCalShortcutsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6
+  },
+  inlineCalShortcutBtn: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6
+  },
+  inlineCalShortcutText: {
+    fontSize: 10.5,
+    fontWeight: '700',
+    color: '#334155'
   }
 });

@@ -9,12 +9,13 @@ import {
   Alert,
   KeyboardAvoidingView,
   Platform,
-  ScrollView
+  ScrollView,
+  Modal
 } from 'react-native';
-import { Wrench, Shield, Mail, Lock, Server } from 'lucide-react-native';
+import { Wrench, Shield, Mail, Lock, Server, UserPlus, X, Phone, User } from 'lucide-react-native';
 import { useAuth } from '../context/AuthContext';
 import { colors } from '../theme/colors';
-import { setCustomApiUrl } from '../services/api';
+import { setCustomApiUrl, api } from '../services/api';
 
 export default function LoginScreen() {
   const { login } = useAuth();
@@ -23,6 +24,17 @@ export default function LoginScreen() {
   const [loading, setLoading] = useState(false);
   const [customUrl, setCustomUrl] = useState('');
   const [showUrlConfig, setShowUrlConfig] = useState(false);
+
+  // Registracija novog korisnika
+  const [showRegisterModal, setShowRegisterModal] = useState(false);
+  const [regForm, setRegForm] = useState({
+    ime: '',
+    prezime: '',
+    email: '',
+    telefon: '',
+    lozinka: ''
+  });
+  const [registering, setRegistering] = useState(false);
 
   const handleLogin = async () => {
     if (!email || !password) {
@@ -39,6 +51,29 @@ export default function LoginScreen() {
     }
   };
 
+  const handleRegister = async () => {
+    if (!regForm.ime.trim() || !regForm.email.trim() || !regForm.lozinka.trim()) {
+      Alert.alert('Upozorenje', 'Ime, email i lozinka su obavezna polja.');
+      return;
+    }
+    setRegistering(true);
+    try {
+      const res = await api.register(regForm);
+      Alert.alert(
+        'Uspešna registracija',
+        res?.poruka || 'Vaš nalog je kreiran kao običan korisnik (ID role 3). SuperAdministrator će Vam dodeliti ulogu administratora i servis pre nego što se prijavite.'
+      );
+      setEmail(regForm.email);
+      setPassword(regForm.lozinka);
+      setShowRegisterModal(false);
+      setRegForm({ ime: '', prezime: '', email: '', telefon: '', lozinka: '' });
+    } catch (err) {
+      Alert.alert('Greška pri registraciji', err.message || 'Nije moguće završiti registraciju.');
+    } finally {
+      setRegistering(false);
+    }
+  };
+
   const handleSaveApiUrl = async () => {
     if (customUrl.trim()) {
       await setCustomApiUrl(customUrl.trim());
@@ -49,7 +84,7 @@ export default function LoginScreen() {
 
   const fillDemo = (demoEmail, demoRole) => {
     setEmail(demoEmail);
-    setPassword('majstor123');
+    setPassword(demoRole === 'SuperAdmin' ? 'admin123' : 'majstor123');
   };
 
   return (
@@ -110,6 +145,18 @@ export default function LoginScreen() {
               )}
             </TouchableOpacity>
 
+            {/* Dugme za registraciju novog korisnika */}
+            <TouchableOpacity
+              style={styles.registerToggleBtn}
+              onPress={() => setShowRegisterModal(true)}
+              activeOpacity={0.8}
+            >
+              <UserPlus size={16} color="#38BDF8" style={{ marginRight: 6 }} />
+              <Text style={styles.registerToggleBtnText}>
+                Nemate nalog? <Text style={{ textDecorationLine: 'underline', fontWeight: '800' }}>Registrujte se ovde</Text>
+              </Text>
+            </TouchableOpacity>
+
             {/* Demo Quick-Fill Buttons */}
             <View style={styles.demoSection}>
               <Text style={styles.demoTitle}>Brza demo prijava:</Text>
@@ -130,16 +177,16 @@ export default function LoginScreen() {
 
                 <TouchableOpacity
                   style={[styles.demoBtn, { backgroundColor: '#EFF6FF', borderColor: colors.primary }]}
-                  onPress={() => fillDemo('gazda@termoklima-sd.rs', 'Dispečer')}
+                  onPress={() => fillDemo('gazda@termoklima-sd.rs', 'Admin servisa')}
                 >
-                  <Text style={[styles.demoBtnText, { color: colors.primary }]}>📊 Dispečer / Gazda</Text>
+                  <Text style={[styles.demoBtnText, { color: colors.primary }]}>🏢 Admin servisa / Gazda</Text>
                 </TouchableOpacity>
 
                 <TouchableOpacity
                   style={[styles.demoBtn, { backgroundColor: '#FAF5FF', borderColor: '#9333EA' }]}
                   onPress={() => fillDemo('admin@majstornalog.rs', 'SuperAdmin')}
                 >
-                  <Text style={[styles.demoBtnText, { color: '#7E22CE' }]}>👑 SuperAdmin (Licence i Firme)</Text>
+                  <Text style={[styles.demoBtnText, { color: '#7E22CE' }]}>👑 SuperAdmin (Upravljanje servisima & ulogama)</Text>
                 </TouchableOpacity>
               </View>
             </View>
@@ -157,7 +204,7 @@ export default function LoginScreen() {
               <View style={styles.configBox}>
                 <TextInput
                   style={styles.configInput}
-                  placeholder="http://192.168.1.X/majstornalog/backend/api.php"
+                  placeholder="https://bookmymusic.rs/majstornalog/api.php"
                   value={customUrl}
                   onChangeText={setCustomUrl}
                   autoCapitalize="none"
@@ -170,6 +217,103 @@ export default function LoginScreen() {
           </View>
         </View>
       </ScrollView>
+
+      {/* MODAL ZA JAVNU REGISTRACIJU */}
+      <Modal visible={showRegisterModal} animationType="slide" transparent>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <UserPlus size={20} color={colors.primary} style={{ marginRight: 8 }} />
+                <Text style={styles.modalTitle}>Registracija novog korisnika</Text>
+              </View>
+              <TouchableOpacity onPress={() => setShowRegisterModal(false)}>
+                <X size={20} color="#94A3B8" />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView contentContainerStyle={{ paddingVertical: 12, gap: 10 }}>
+              <Text style={styles.modalNoticeText}>
+                Nakon registracije Vaš nalog dobija status <Text style={{ fontWeight: '800', color: '#0284C7' }}>Običnog korisnika (ID role 3)</Text>. SuperAdministrator će Vam dodeliti ulogu Administratora servisa (ID role 2) i povezati Vaš servis pre nego što počnete sa radom.
+              </Text>
+
+              <View style={{ flexDirection: 'row', gap: 10 }}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.modalLabel}>Ime *</Text>
+                  <TextInput
+                    style={styles.modalInput}
+                    placeholder="Petar"
+                    placeholderTextColor="#64748B"
+                    value={regForm.ime}
+                    onChangeText={(t) => setRegForm({ ...regForm, ime: t })}
+                  />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.modalLabel}>Prezime</Text>
+                  <TextInput
+                    style={styles.modalInput}
+                    placeholder="Jovanović"
+                    placeholderTextColor="#64748B"
+                    value={regForm.prezime}
+                    onChangeText={(t) => setRegForm({ ...regForm, prezime: t })}
+                  />
+                </View>
+              </View>
+
+              <Text style={styles.modalLabel}>Email adresa (Korisničko ime) *</Text>
+              <TextInput
+                style={styles.modalInput}
+                placeholder="petar@mojservis.rs"
+                placeholderTextColor="#64748B"
+                value={regForm.email}
+                onChangeText={(t) => setRegForm({ ...regForm, email: t })}
+                keyboardType="email-address"
+                autoCapitalize="none"
+              />
+
+              <Text style={styles.modalLabel}>Broj telefona</Text>
+              <TextInput
+                style={styles.modalInput}
+                placeholder="064-111-222"
+                placeholderTextColor="#64748B"
+                value={regForm.telefon}
+                onChangeText={(t) => setRegForm({ ...regForm, telefon: t })}
+              />
+
+              <Text style={styles.modalLabel}>Lozinka *</Text>
+              <TextInput
+                style={styles.modalInput}
+                placeholder="Izaberite lozinku"
+                placeholderTextColor="#64748B"
+                value={regForm.lozinka}
+                onChangeText={(t) => setRegForm({ ...regForm, lozinka: t })}
+                secureTextEntry
+              />
+            </ScrollView>
+
+            <View style={styles.modalFooter}>
+              <TouchableOpacity
+                style={styles.modalCancelBtn}
+                onPress={() => setShowRegisterModal(false)}
+              >
+                <Text style={styles.modalCancelBtnText}>Odustani</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.modalSubmitBtn, registering && { opacity: 0.7 }]}
+                onPress={handleRegister}
+                disabled={registering}
+              >
+                {registering ? (
+                  <ActivityIndicator color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.modalSubmitBtnText}>Registruj se</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </KeyboardAvoidingView>
   );
 }
@@ -187,7 +331,7 @@ const styles = StyleSheet.create({
   },
   card: {
     width: '100%',
-    maxWidth: 420,
+    maxWidth: 440,
     backgroundColor: '#1E293B',
     borderRadius: 20,
     padding: 28,
@@ -275,8 +419,20 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '800'
   },
+  registerToggleBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 14,
+    paddingVertical: 6
+  },
+  registerToggleBtnText: {
+    color: '#38BDF8',
+    fontSize: 13,
+    fontWeight: '600'
+  },
   demoSection: {
-    marginTop: 24,
+    marginTop: 20,
     paddingTop: 18,
     borderTopWidth: 1,
     borderTopColor: '#334155'
@@ -343,5 +499,94 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 11,
     fontWeight: '700'
+  },
+
+  // Modal za registraciju
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 16
+  },
+  modalContent: {
+    width: '100%',
+    maxWidth: 440,
+    backgroundColor: '#1E293B',
+    borderRadius: 16,
+    padding: 20,
+    borderWidth: 1,
+    borderColor: '#334155'
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#334155'
+  },
+  modalTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#FFFFFF'
+  },
+  modalNoticeText: {
+    fontSize: 12,
+    color: '#94A3B8',
+    lineHeight: 17,
+    backgroundColor: '#0F172A',
+    padding: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#334155'
+  },
+  modalLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#CBD5E1',
+    marginTop: 4
+  },
+  modalInput: {
+    backgroundColor: '#0F172A',
+    borderWidth: 1,
+    borderColor: '#334155',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    color: '#FFFFFF',
+    fontSize: 13,
+    marginTop: 4
+  },
+  modalFooter: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 10,
+    paddingTop: 14,
+    borderTopWidth: 1,
+    borderTopColor: '#334155',
+    marginTop: 10
+  },
+  modalCancelBtn: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 8,
+    backgroundColor: '#334155'
+  },
+  modalCancelBtnText: {
+    color: '#E2E8F0',
+    fontSize: 13,
+    fontWeight: '700'
+  },
+  modalSubmitBtn: {
+    paddingHorizontal: 18,
+    paddingVertical: 8,
+    borderRadius: 8,
+    backgroundColor: colors.primary
+  },
+  modalSubmitBtnText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '800'
   }
 });

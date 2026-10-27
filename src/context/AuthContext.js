@@ -46,8 +46,10 @@ export const AuthProvider = ({ children }) => {
 
   const isWorker = user?.rola === 'majstor';
   const isDispatcher = user?.rola === 'dispecer';
-  const isOwner = user?.rola === 'vlasnik';
-  const isSuperAdmin = user?.rola === 'superadmin';
+  const isOwner = user?.rola === 'vlasnik' || user?.rola === 'admin' || Number(user?.rola_id) === 2;
+  const isAdmin = isOwner;
+  const isSuperAdmin = user?.rola === 'superadmin' || Number(user?.rola_id) === 1;
+  const isRegularUser = user?.rola === 'korisnik' || Number(user?.rola_id) === 3;
 
   return (
     <AuthContext.Provider
@@ -61,6 +63,8 @@ export const AuthProvider = ({ children }) => {
         isDispatcher,
         isOwner,
         isSuperAdmin,
+        isAdmin,
+        isRegularUser,
         firmId: user?.firma_id || 1
       }}
     >

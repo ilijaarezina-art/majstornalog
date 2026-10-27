@@ -175,5 +175,47 @@ export const api = {
 
   getPackages: async () => {
     return request('get_packages');
+  },
+
+  // UPRAVLJANJE KORISNICIMA I ULOGAMA (ROLE ID 1, 2, 3)
+  getRoles: async () => {
+    return request('get_roles');
+  },
+
+  getUsers: async (firmId = null) => {
+    const q = firmId ? `firma_id=${encodeURIComponent(firmId)}` : '';
+    return request('get_users', q ? { query: q } : {});
+  },
+
+  saveUser: async (userData) => {
+    return request('save_user', {
+      method: 'POST',
+      body: userData
+    });
+  },
+
+  deleteUser: async (userId) => {
+    return request('delete_user', {
+      method: 'POST',
+      body: { user_id: userId }
+    });
+  },
+
+  saveWorker: async (workerData) => {
+    return request('save_user', {
+      method: 'POST',
+      body: {
+        ...workerData,
+        rola: 'majstor',
+        rola_id: 3
+      }
+    });
+  },
+
+  register: async (userData) => {
+    return request('register', {
+      method: 'POST',
+      body: userData
+    });
   }
 };
