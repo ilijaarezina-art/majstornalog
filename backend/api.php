@@ -765,7 +765,10 @@ elseif ($action === 'get_dispatcher_dashboard') {
                ml.trenutni_nalog_id
         FROM korisnici k
         LEFT JOIN majstori_lokacija ml ON k.id = ml.majstor_id
-        WHERE k.firma_id = ? AND (k.rola = 'majstor' OR k.rola = 'radnik' OR (k.rola_id IN (2, 3) AND k.firma_id IS NOT NULL)) AND k.aktivan = 1
+        WHERE k.firma_id = ? 
+          AND k.aktivan = 1 
+          AND k.rola_id = 3
+          AND (k.rola = 'majstor' OR k.rola = 'radnik' OR k.rola = 'korisnik')
         ORDER BY k.id ASC
     ");
     $stmtWorkers->execute([$firma_id]);
