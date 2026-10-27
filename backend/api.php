@@ -967,6 +967,7 @@ elseif ($action === 'get_users') {
 // 15. KREIRANJE / IZMENA KORISNIKA SA DODELOM ROLE PO ID-JU (SAVE_USER)
 // ==========================================================
 elseif ($action === 'save_user') {
+    try {
     $user_id = isset($inputData['id']) ? intval($inputData['id']) : 0;
     $ime = isset($inputData['ime']) ? trim($inputData['ime']) : '';
     $prezime = isset($inputData['prezime']) ? trim($inputData['prezime']) : '';
@@ -1035,12 +1036,25 @@ elseif ($action === 'save_user') {
         $stmt->execute([$rola_id, $rola_kod, $firma_id, $ime, $prezime, $email, $telefon, $hash, $lozinkaPlain, $boja_markera, $aktivan]);
         $newId = $conn->lastInsertId();
 
-        // Ako radnik pripada firmi, osiguraj unos u majstori_lokacija
-        if ($firma_id > 0) {
-            $chkMl = $conn->prepare("SELECT id FROM majstori_lokacija WHERE majstor_id = ? LIMIT 1");
-            $chkMl->execute([$newId]);
-            if (!$chkMl->fetch()) {
-                $conn->prepare("INSERT INTO majstori_lokacija (majstor_id, firma_id, status, poslednje_azuriranje) VALUES (?, ?, 'SLOBODAN', NOW())")->execute([$newId, $firma_id]);
+        // Ako je korisnik terenski radnik/majstor i pripada firmi, inicijalizuj unos u majstori_lokacija
+        if ($firma_id > 0 && in_array($rola_kod, ['majstor', 'radnik'])) {
+            try {
+                $chkMl = $conn->prepare("SELECT majstor_id FROM majstori_lokacija WHERE majstor_id = ? LIMIT 1");
+                $chkMl->execute([$newId]);
+                if (!$chkMl->fetch()) {
+                    $fCoordStmt = $conn->prepare("SELECT gpsX, gpsY FROM firme WHERE id = ? LIMIT 1");
+                    $fCoordStmt->execute([$firma_id]);
+                    $fCoord = $fCoordStmt->fetch();
+                    $initX = ($fCoord && !empty($fCoord['gpsX'])) ? floatval($fCoord['gpsX']) : 44.6655;
+                    $initY = ($fCoord && !empty($fCoord['gpsY'])) ? floatval($fCoord['gpsY']) : 20.9290;
+
+                    $conn->prepare("
+                        INSERT INTO majstori_lokacija (majstor_id, firma_id, gpsX, gpsY, brzina, kurs, status, poslednje_azuriranje)
+                        VALUES (?, ?, ?, ?, 0, 0, 'SLOBODAN', NOW())
+                    ")->execute([$newId, $firma_id, $initX, $initY]);
+                }
+            } catch (Exception $mlEx) {
+                // Tiho ignorisi telemetriju
             }
         }
 
@@ -1048,6 +1062,8 @@ elseif ($action === 'save_user') {
             "id" => $newId,
             "poruka" => "Novi korisnik je uspešno kreiran sa dodeljenom rolom ID: {$rola_id} ({$rola_kod})."
         ]);
+    } catch (Exception $e) {
+        sendResponse('error', 'Greška: ' . $e->getMessage(), 500);
     }
 }
 
