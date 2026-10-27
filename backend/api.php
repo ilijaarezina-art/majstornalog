@@ -558,6 +558,106 @@ elseif ($action === 'complete_order') {
 }
 
 // ==========================================================
+// 5B. KREIRANJE NOVOG RADNOG NALOGA (CREATE_ORDER)
+// ==========================================================
+elseif ($action === 'create_order') {
+    $firma_id = isset($inputData['firma_id']) ? intval($inputData['firma_id']) : 0;
+    if ($firma_id <= 0) {
+        sendResponse('error', 'Firma ID je obavezan.', 400);
+    }
+
+    $klijent_ime = isset($inputData['klijent_ime']) ? trim($inputData['klijent_ime']) : '';
+    $klijent_telefon = isset($inputData['telefon']) ? trim($inputData['telefon']) : '';
+    $adresa = isset($inputData['adresa']) ? trim($inputData['adresa']) : '';
+    $grad = isset($inputData['grad']) && !empty($inputData['grad']) ? trim($inputData['grad']) : 'Smederevo';
+    $opis_kvara = isset($inputData['opis_kvara']) ? trim($inputData['opis_kvara']) : '';
+    $tip_intervencije = isset($inputData['tip_intervencije']) ? trim($inputData['tip_intervencije']) : 'REDOVAN_SERVIS';
+    $prioritet = isset($inputData['prioritet']) ? trim($inputData['prioritet']) : 'NORMALAN';
+    $majstor_id = isset($inputData['majstor_id']) && intval($inputData['majstor_id']) > 0 ? intval($inputData['majstor_id']) : null;
+    $zakazano_za = isset($inputData['zakazano_za']) && !empty($inputData['zakazano_za']) ? trim($inputData['zakazano_za']) : date('Y-m-d H:i:s');
+    $kreirao_id = isset($inputData['kreirao_id']) ? intval($inputData['kreirao_id']) : null;
+
+    if (empty($klijent_ime) || empty($adresa)) {
+        sendResponse('error', 'Ime klijenta i adresa intervencije su obavezna polja.', 400);
+    }
+
+    // 1. Koordinatni proračun: probaj iz inputData, ili iz firme, ili bazni grad Smederevo
+    $gpsX = isset($inputData['gpsX']) && !empty($inputData['gpsX']) ? floatval($inputData['gpsX']) : null;
+    $gpsY = isset($inputData['gpsY']) && !empty($inputData['gpsY']) ? floatval($inputData['gpsY']) : null;
+
+    if (!$gpsX || !$gpsY) {
+        $fStmt = $conn->prepare("SELECT gpsX, gpsY FROM firme WHERE id = ? LIMIT 1");
+        $fStmt->execute([$firma_id]);
+        $fRow = $fStmt->fetch();
+        $baseX = ($fRow && !empty($fRow['gpsX'])) ? floatval($fRow['gpsX']) : 44.6655;
+        $baseY = ($fRow && !empty($fRow['gpsY'])) ? floatval($fRow['gpsY']) : 20.9290;
+        // Blagi slučajni ofset (oko 100-400m) unutar grada da se markeri na mapi lepo razdvoje
+        $randOffsetX = (mt_rand(-150, 150)) / 10000.0;
+        $randOffsetY = (mt_rand(-150, 150)) / 10000.0;
+        $gpsX = $baseX + $randOffsetX;
+        $gpsY = $baseY + $randOffsetY;
+    }
+
+    // 2. Kreiranje ili pronalaženje klijenta
+    $chkKl = $conn->prepare("SELECT id FROM klijenti WHERE firma_id = ? AND telefon = ? AND ime_prezime = ? LIMIT 1");
+    $chkKl->execute([$firma_id, $klijent_telefon, $klijent_ime]);
+    $klijent_id = $chkKl->fetchColumn();
+
+    if (!$klijent_id) {
+        $insKl = $conn->prepare("
+            INSERT INTO klijenti (firma_id, tip, ime_prezime, telefon, adresa, grad, gpsX, gpsY, napomena)
+            VALUES (?, 'FIZICKO', ?, ?, ?, ?, ?, ?, ?)
+        ");
+        $insKl->execute([$firma_id, $klijent_ime, $klijent_telefon, $adresa, $grad, $gpsX, $gpsY, $opis_kvara]);
+        $klijent_id = $conn->lastInsertId();
+    }
+
+    // 3. Generisanje jedinstvenog broja naloga (npr. RN-2026-0005)
+    $curYear = date('Y');
+    $cntStmt = $conn->prepare("SELECT COUNT(*) FROM radni_nalozi WHERE firma_id = ? AND YEAR(kreiran_at) = ?");
+    $cntStmt->execute([$firma_id, $curYear]);
+    $nextNum = intval($cntStmt->fetchColumn()) + 1;
+    $broj_naloga = "RN-{$curYear}-" . str_pad($nextNum, 4, '0', STR_PAD_LEFT);
+
+    // Ako već postoji taj broj, dodaj sufiks
+    $chkRn = $conn->prepare("SELECT id FROM radni_nalozi WHERE broj_naloga = ? LIMIT 1");
+    $chkRn->execute([$broj_naloga]);
+    if ($chkRn->fetch()) {
+        $broj_naloga = "RN-{$curYear}-" . str_pad($nextNum, 4, '0', STR_PAD_LEFT) . '-' . substr(time(), -3);
+    }
+
+    // 4. Status naloga: ako je majstor izabran -> 'DODELJENO', inače -> 'KREIRANO'
+    $status = ($majstor_id && $majstor_id > 0) ? 'DODELJENO' : 'KREIRANO';
+
+    // 5. Unos naloga
+    $insRn = $conn->prepare("
+        INSERT INTO radni_nalozi (
+            broj_naloga, firma_id, klijent_id, majstor_id, prioritet, tip_intervencije,
+            status, adresa, gpsX, gpsY, opis_kvara, zakazano_za, kreirao_id, kreiran_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+    ");
+    $insRn->execute([
+        $broj_naloga, $firma_id, $klijent_id, $majstor_id, $prioritet, $tip_intervencije,
+        $status, $adresa, $gpsX, $gpsY, $opis_kvara, $zakazano_za, $kreirao_id
+    ]);
+    $newOrderId = $conn->lastInsertId();
+
+    // 6. Upis u status_istorija
+    $logStmt = $conn->prepare("
+        INSERT INTO status_istorija (nalog_id, prethodni_status, novi_status, promenio_id, komentar, vreme_promene)
+        VALUES (?, NULL, ?, ?, 'Kreiran novi radni nalog preko dispečerskog centra', NOW())
+    ");
+    $logStmt->execute([$newOrderId, $status, $kreirao_id]);
+
+    sendResponse('success', [
+        "id" => $newOrderId,
+        "broj_naloga" => $broj_naloga,
+        "status" => $status,
+        "poruka" => "Radni nalog {$broj_naloga} je uspešno kreiran!"
+    ]);
+}
+
+// ==========================================================
 // 6. KATALOG DELOVA I USLUGA (GET_CATALOG)
 // ==========================================================
 elseif ($action === 'get_catalog') {
@@ -646,7 +746,7 @@ elseif ($action === 'get_dispatcher_dashboard') {
         FROM radni_nalozi rn
         JOIN klijenti k ON rn.klijent_id = k.id
         LEFT JOIN uredjaji u ON rn.uredjaj_id = u.id
-        WHERE rn.firma_id = ? AND (DATE(rn.zakazano_za) = ? OR rn.status IN ('DODELJENO', 'PRIHVACENO', 'NA_PUTU', 'U_RADU'))
+        WHERE rn.firma_id = ? AND (DATE(rn.zakazano_za) = ? OR rn.status IN ('KREIRANO', 'DODELJENO', 'PRIHVACENO', 'NA_PUTU', 'U_RADU'))
         ORDER BY rn.zakazano_za ASC
     ");
     $stmtOrders->execute([$firma_id, $datum]);

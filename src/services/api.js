@@ -147,6 +147,13 @@ export const api = {
     return request('get_dispatcher_dashboard', { query: qStr });
   },
 
+  createOrder: async (orderData) => {
+    return request('create_order', {
+      method: 'POST',
+      body: orderData
+    });
+  },
+
   // SUPERADMIN SAAS ENDPOINTI
   getSuperadminDashboard: async () => {
     return request('get_superadmin_dashboard');

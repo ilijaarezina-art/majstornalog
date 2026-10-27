@@ -68,6 +68,10 @@ function MainNavigator() {
     return (
       <DispatcherScreen
         onBackToWorker={() => setCurrentView(isSuperAdmin ? 'superadmin' : 'orders')}
+        onSelectOrder={(orderId) => {
+          setSelectedOrderId(orderId);
+          setCurrentView('detail');
+        }}
       />
     );
   }
