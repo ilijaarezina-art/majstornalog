@@ -612,18 +612,38 @@ elseif ($action === 'create_order') {
         $klijent_id = $conn->lastInsertId();
     }
 
-    // 3. Generisanje jedinstvenog broja naloga (npr. RN-2026-0005)
+    // 3. Generisanje jedinstvenog broja naloga u formatu 001/2026 (sekvencijalno po godini i servisu)
     $curYear = date('Y');
-    $cntStmt = $conn->prepare("SELECT COUNT(*) FROM radni_nalozi WHERE firma_id = ? AND YEAR(kreiran_at) = ?");
-    $cntStmt->execute([$firma_id, $curYear]);
-    $nextNum = intval($cntStmt->fetchColumn()) + 1;
-    $broj_naloga = "RN-{$curYear}-" . str_pad($nextNum, 4, '0', STR_PAD_LEFT);
+    $seqStmt = $conn->prepare("
+        SELECT broj_naloga FROM radni_nalozi 
+        WHERE firma_id = ? AND (broj_naloga LIKE ? OR YEAR(kreiran_at) = ?)
+        ORDER BY id DESC
+    ");
+    $seqStmt->execute([$firma_id, "%/{$curYear}", $curYear]);
+    $existingOrders = $seqStmt->fetchAll(PDO::FETCH_COLUMN);
 
-    // Ako već postoji taj broj, dodaj sufiks
-    $chkRn = $conn->prepare("SELECT id FROM radni_nalozi WHERE broj_naloga = ? LIMIT 1");
-    $chkRn->execute([$broj_naloga]);
-    if ($chkRn->fetch()) {
-        $broj_naloga = "RN-{$curYear}-" . str_pad($nextNum, 4, '0', STR_PAD_LEFT) . '-' . substr(time(), -3);
+    $maxNum = 0;
+    foreach ($existingOrders as $bn) {
+        if (preg_match('/^(\d+)\/' . $curYear . '$/', $bn, $matches)) {
+            $val = intval($matches[1]);
+            if ($val > $maxNum) {
+                $maxNum = $val;
+            }
+        }
+    }
+    if ($maxNum === 0) {
+        $maxNum = count($existingOrders);
+    }
+    $nextNum = $maxNum + 1;
+    $broj_naloga = sprintf("%03d/%s", $nextNum, $curYear);
+
+    // Sigurnosna provera jedinstvenosti
+    $chkRn = $conn->prepare("SELECT id FROM radni_nalozi WHERE firma_id = ? AND broj_naloga = ? LIMIT 1");
+    $chkRn->execute([$firma_id, $broj_naloga]);
+    while ($chkRn->fetch()) {
+        $nextNum++;
+        $broj_naloga = sprintf("%03d/%s", $nextNum, $curYear);
+        $chkRn->execute([$firma_id, $broj_naloga]);
     }
 
     // 4. Status naloga: ako je majstor izabran -> 'DODELJENO', inače -> 'KREIRANO'
@@ -739,17 +759,19 @@ elseif ($action === 'get_dispatcher_dashboard') {
     $stmtWorkers->execute([$firma_id]);
     $workers = $stmtWorkers->fetchAll();
 
-    // 2. Nalozi za današnji dan
+    // 2. Nalozi za dispečersku tablu sa podacima o dodeljenom radniku
     $stmtOrders = $conn->prepare("
         SELECT rn.*, k.ime_prezime as klijent_ime, k.telefon as klijent_telefon,
-               u.kategorija as uredjaj_kategorija, u.proizvodjac as uredjaj_proizvodjac
+               u.kategorija as uredjaj_kategorija, u.proizvodjac as uredjaj_proizvodjac,
+               m.ime as majstor_ime, m.prezime as majstor_prezime, m.telefon as majstor_telefon, m.boja_markera as majstor_boja
         FROM radni_nalozi rn
         JOIN klijenti k ON rn.klijent_id = k.id
         LEFT JOIN uredjaji u ON rn.uredjaj_id = u.id
-        WHERE rn.firma_id = ? AND (DATE(rn.zakazano_za) = ? OR rn.status IN ('KREIRANO', 'DODELJENO', 'PRIHVACENO', 'NA_PUTU', 'U_RADU'))
-        ORDER BY rn.zakazano_za ASC
+        LEFT JOIN korisnici m ON rn.majstor_id = m.id
+        WHERE rn.firma_id = ? AND (DATE(rn.zakazano_za) = ? OR DATE(rn.kreiran_at) = ? OR rn.status IN ('PRIHVACENO', 'NA_PUTU', 'U_RADU'))
+        ORDER BY rn.zakazano_za ASC, rn.id DESC
     ");
-    $stmtOrders->execute([$firma_id, $datum]);
+    $stmtOrders->execute([$firma_id, $datum, $datum]);
     $orders = $stmtOrders->fetchAll();
 
     sendResponse('success', [

@@ -25,8 +25,6 @@ import {
   Truck,
   Wrench,
   AlertTriangle,
-  UserPlus,
-  Trash2,
   Key,
   X,
   Check,
@@ -34,22 +32,17 @@ import {
   Mail,
   Phone,
   Plus,
+  ChevronLeft,
   ChevronRight,
   Calendar,
-  FileText
+  Filter,
+  UserCheck,
+  UserX
 } from 'lucide-react-native';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../services/api';
 import { colors } from '../theme/colors';
 import MapComponent from '../components/MapComponent';
-
-const MARKER_COLORS = [
-  { color: '#059669', name: 'Zelena' },
-  { color: '#0284C7', name: 'Plava' },
-  { color: '#D97706', name: 'Narandžasta' },
-  { color: '#7C3AED', name: 'Ljubičasta' },
-  { color: '#DC2626', name: 'Crvena' }
-];
 
 const TIP_INTERVENCIJE_OPTIONS = [
   { id: 'REDOVAN_SERVIS', label: 'Redovan servis' },
@@ -65,31 +58,30 @@ const PRIORITET_OPTIONS = [
   { id: 'HITNO', label: 'Hitno', color: '#DC2626' }
 ];
 
+const formatDateSerbian = (dateStr) => {
+  if (!dateStr) return '';
+  const parts = dateStr.split('-');
+  if (parts.length === 3) {
+    return `${parts[2]}.${parts[1]}.${parts[0]}.`;
+  }
+  return dateStr;
+};
+
 export default function DispatcherScreen({ onBackToWorker, onSelectOrder }) {
   const { user, firmId, logout, isAdmin, isOwner, isSuperAdmin } = useAuth();
   const { width } = useWindowDimensions();
   const isDesktop = width >= 800;
+
+  const todayStr = new Date().toISOString().split('T')[0];
+  const [selectedDate, setSelectedDate] = useState(todayStr);
+  const [orderFilter, setOrderFilter] = useState('ALL'); // 'ALL' | 'UNASSIGNED_OR_PENDING' | 'IN_PROGRESS' | 'DONE'
 
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [workers, setWorkers] = useState([]);
   const [orders, setOrders] = useState([]);
 
-  // Modal za dodavanje radnika
-  const [showAddModal, setShowAddModal] = useState(false);
-  const [savingWorker, setSavingWorker] = useState(false);
-  const [workerError, setWorkerError] = useState('');
-  const [workerForm, setWorkerForm] = useState({
-    ime: '',
-    prezime: '',
-    telefon: '',
-    email: '',
-    lozinka: 'majstor123',
-    boja_markera: '#059669'
-  });
-
-  // Modal za kreiranje radnog naloga
-  const todayStr = new Date().toISOString().split('T')[0];
+  // Modal za kreiranje novog radnog naloga
   const [showCreateOrderModal, setShowCreateOrderModal] = useState(false);
   const [creatingOrder, setCreatingOrder] = useState(false);
   const [orderError, setOrderError] = useState('');
@@ -106,9 +98,9 @@ export default function DispatcherScreen({ onBackToWorker, onSelectOrder }) {
     zakazano_vreme: '10:00'
   });
 
-  const loadDashboard = useCallback(async () => {
+  const loadDashboard = useCallback(async (targetDate = selectedDate) => {
     try {
-      const data = await api.getDispatcherDashboard(firmId);
+      const data = await api.getDispatcherDashboard(firmId, targetDate);
       setWorkers(data.workers || []);
       setOrders(data.orders || []);
     } catch (err) {
@@ -117,96 +109,58 @@ export default function DispatcherScreen({ onBackToWorker, onSelectOrder }) {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [firmId]);
+  }, [firmId, selectedDate]);
 
   useEffect(() => {
-    loadDashboard();
-    const interval = setInterval(loadDashboard, 10000);
+    loadDashboard(selectedDate);
+    const interval = setInterval(() => loadDashboard(selectedDate), 10000);
     return () => clearInterval(interval);
-  }, [loadDashboard]);
+  }, [loadDashboard, selectedDate]);
 
-  // Radnik hendleri
-  const handleOpenAddWorker = () => {
-    setWorkerError('');
-    setWorkerForm({
-      ime: '',
-      prezime: '',
-      telefon: '',
-      email: '',
-      lozinka: 'majstor123',
-      boja_markera: '#059669'
-    });
-    setShowAddModal(true);
+  // Navigacija kroz dane
+  const handlePrevDay = () => {
+    const dt = new Date(selectedDate);
+    dt.setDate(dt.getDate() - 1);
+    const newStr = dt.toISOString().split('T')[0];
+    setSelectedDate(newStr);
   };
 
-  const handleSaveWorker = async () => {
-    if (!workerForm.ime.trim()) {
-      setWorkerError('Ime radnika je obavezno polje.');
-      return;
-    }
-    if (!workerForm.email.trim()) {
-      setWorkerError('Korisničko ime / email adresa je obavezna.');
-      return;
-    }
-    if (!workerForm.telefon.trim()) {
-      setWorkerError('Broj telefona radnika je obavezan.');
-      return;
-    }
-
-    setSavingWorker(true);
-    setWorkerError('');
-    try {
-      await api.saveWorker({
-        ...workerForm,
-        firma_id: firmId,
-        rola: 'majstor',
-        rola_id: 3,
-        aktivan: 1
-      });
-
-      setShowAddModal(false);
-      loadDashboard();
-      const msg = `Radnik ${workerForm.ime} ${workerForm.prezime} je uspešno dodat servisu.`;
-      if (Platform.OS === 'web') {
-        window.alert(msg);
-      } else {
-        Alert.alert('Uspešno', msg);
-      }
-    } catch (err) {
-      setWorkerError(err.message || 'Greška pri čuvanju radnika.');
-    } finally {
-      setSavingWorker(false);
-    }
+  const handleNextDay = () => {
+    const dt = new Date(selectedDate);
+    dt.setDate(dt.getDate() + 1);
+    const newStr = dt.toISOString().split('T')[0];
+    setSelectedDate(newStr);
   };
 
-  const handleDeleteWorker = (worker) => {
-    const confirmMsg = `Da li ste sigurni da želite da obrišete radnika ${worker.ime} ${worker.prezime}?`;
-    const executeDelete = async () => {
-      try {
-        await api.deleteUser(worker.id);
-        loadDashboard();
-      } catch (err) {
-        if (Platform.OS === 'web') {
-          window.alert(err.message || 'Greška pri brisanju radnika.');
-        } else {
-          Alert.alert('Greška', err.message);
-        }
-      }
-    };
-
-    if (Platform.OS === 'web') {
-      if (window.confirm(confirmMsg)) {
-        executeDelete();
-      }
-    } else {
-      Alert.alert('Potvrda brisanja', confirmMsg, [
-        { text: 'Odustani', style: 'cancel' },
-        { text: 'Obriši', style: 'destructive', onPress: executeDelete }
-      ]);
-    }
+  const handleToday = () => {
+    setSelectedDate(todayStr);
   };
 
-  // Radni nalog hendleri
+  // Radni nalozi koji su preuzeti od strane radnika na terenu
+  const fieldOrders = orders.filter(o => 
+    ['PRIHVACENO', 'NA_PUTU', 'U_RADU'].includes(o.status) && (o.majstor_id || o.majstor_ime)
+  );
+
+  // Filtrirani nalozi za odabrani datum
+  const dateOrders = orders.filter(o => {
+    const orderDate = o.zakazano_za ? o.zakazano_za.split(' ')[0] : (o.kreiran_at ? o.kreiran_at.split(' ')[0] : '');
+    const matchesDate = orderDate === selectedDate || (!orderDate && selectedDate === todayStr);
+
+    if (!matchesDate) return false;
+
+    if (orderFilter === 'UNASSIGNED_OR_PENDING') {
+      return !o.majstor_id || ['KREIRANO', 'DODELJENO'].includes(o.status);
+    }
+    if (orderFilter === 'IN_PROGRESS') {
+      return ['PRIHVACENO', 'NA_PUTU', 'U_RADU'].includes(o.status);
+    }
+    if (orderFilter === 'DONE') {
+      return o.status === 'ZAVRSENO';
+    }
+    return true;
+  });
+
+  // Otvaranje forme za novi nalog
   const handleOpenCreateOrder = () => {
     setOrderError('');
     setOrderForm({
@@ -217,8 +171,8 @@ export default function DispatcherScreen({ onBackToWorker, onSelectOrder }) {
       tip_intervencije: 'REDOVAN_SERVIS',
       prioritet: 'NORMALAN',
       opis_kvara: '',
-      majstor_id: workers.length > 0 ? String(workers[0].id) : '',
-      zakazano_datum: new Date().toISOString().split('T')[0],
+      majstor_id: '', // Podrazumevano: Bez dodele (može da se odabere ali ne mora)
+      zakazano_datum: selectedDate || todayStr,
       zakazano_vreme: '10:00'
     });
     setShowCreateOrderModal(true);
@@ -226,7 +180,7 @@ export default function DispatcherScreen({ onBackToWorker, onSelectOrder }) {
 
   const handleSaveOrder = async () => {
     if (!orderForm.klijent_ime.trim()) {
-      setOrderError('Ime klijenta je obavezno polje.');
+      setOrderError('Ime i prezime klijenta je obavezno polje.');
       return;
     }
     if (!orderForm.adresa.trim()) {
@@ -257,8 +211,8 @@ export default function DispatcherScreen({ onBackToWorker, onSelectOrder }) {
       });
 
       setShowCreateOrderModal(false);
-      loadDashboard();
-      const successMsg = `Radni nalog ${res?.broj_naloga || ''} je uspešno kreiran i zaveden!`;
+      loadDashboard(selectedDate);
+      const successMsg = `Radni nalog ${res?.broj_naloga || ''} je uspešno kreiran!`;
       if (Platform.OS === 'web') {
         window.alert(successMsg);
       } else {
@@ -274,23 +228,24 @@ export default function DispatcherScreen({ onBackToWorker, onSelectOrder }) {
   const getStatusBadge = (status) => {
     switch (status) {
       case 'U_RADU':
-        return { label: 'U RADU', color: colors.warning };
+        return { label: 'U RADU', color: colors.warning, bg: '#FEF3C7', text: '#B45309' };
       case 'NA_PUTU':
-        return { label: 'NA PUTU', color: colors.primary };
+        return { label: 'NA PUTU', color: colors.primary, bg: '#E0F2FE', text: '#0369A1' };
+      case 'PRIHVACENO':
+        return { label: 'PRIHVAĆENO', color: '#6366F1', bg: '#EEF2FF', text: '#4338CA' };
       case 'ZAVRSENO':
-        return { label: 'ZAVRŠENO', color: colors.success };
+        return { label: 'ZAVRŠENO', color: colors.success, bg: '#ECFDF5', text: '#047857' };
       case 'DODELJENO':
-        return { label: 'DODELJENO', color: '#6366F1' };
+        return { label: 'DODELJENO', color: '#0284C7', bg: '#F0F9FF', text: '#0284C7' };
       case 'KREIRANO':
-        return { label: 'KREIRANO', color: '#8B5CF6' };
       default:
-        return { label: 'ČEKA RED', color: '#64748B' };
+        return { label: 'KREIRANO', color: '#8B5CF6', bg: '#F5F3FF', text: '#7C3AED' };
     }
   };
 
   return (
     <View style={styles.container}>
-      {/* Header */}
+      {/* Gornje zaglavlje (Header) sa jednim glavnim dugmetom za Novi nalog */}
       <View style={styles.header}>
         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
           {onBackToWorker && (
@@ -305,19 +260,19 @@ export default function DispatcherScreen({ onBackToWorker, onSelectOrder }) {
         </View>
 
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-          {/* Dugme za brzi unos naloga u headeru */}
+          {/* Jedino dugme za kreiranje novog radnog naloga */}
           {(isAdmin || isOwner || isSuperAdmin) && (
             <TouchableOpacity
               style={styles.headerCreateBtn}
               onPress={handleOpenCreateOrder}
               activeOpacity={0.8}
             >
-              <Plus size={15} color="#FFFFFF" style={{ marginRight: 4 }} />
+              <Plus size={15} color="#FFFFFF" style={{ marginRight: 5 }} />
               <Text style={styles.headerCreateBtnText}>Novi nalog</Text>
             </TouchableOpacity>
           )}
 
-          <TouchableOpacity style={styles.iconBtn} onPress={loadDashboard} activeOpacity={0.8}>
+          <TouchableOpacity style={styles.iconBtn} onPress={() => loadDashboard(selectedDate)} activeOpacity={0.8}>
             <RefreshCw size={18} color="#64748B" />
           </TouchableOpacity>
           <TouchableOpacity style={styles.iconBtn} onPress={logout} activeOpacity={0.8}>
@@ -334,16 +289,15 @@ export default function DispatcherScreen({ onBackToWorker, onSelectOrder }) {
         </View>
       ) : (
         <View style={[styles.mainBody, isDesktop && styles.mainBodyDesktop]}>
-          {/* Left Column: Interactive Map */}
-          <View style={[styles.mapCol, isDesktop && { flex: 1.2 }]}>
+          {/* Leva kolona: Interaktivna mapa terena */}
+          <View style={[styles.mapCol, isDesktop && { flex: 1.15 }]}>
             <View style={styles.mapCard}>
               <View style={styles.mapHeaderBar}>
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 6 }}>
                   <View>
                     <Text style={styles.mapHeaderTitle}>Karta terena uživo (Majstori i intervencije)</Text>
-                    <Text style={styles.mapHeaderSub}>{workers.length} majstora • {orders.length} naloga danas</Text>
+                    <Text style={styles.mapHeaderSub}>{workers.length} majstora • {fieldOrders.length} naloga u radu</Text>
                   </View>
-                  {/* Legenda boja na mapi */}
                   <View style={styles.mapLegendRow}>
                     <View style={styles.legendItem}>
                       <View style={[styles.legendDot, { backgroundColor: '#059669' }]} />
@@ -365,156 +319,215 @@ export default function DispatcherScreen({ onBackToWorker, onSelectOrder }) {
                 isDispatcher={true}
                 workers={workers}
                 orders={orders}
-                height={isDesktop ? 550 : 280}
+                height={isDesktop ? 570 : 280}
               />
             </View>
           </View>
 
-          {/* Right Column: Workers & Orders lists */}
+          {/* Desna kolona: Ekipe na terenu i Radni nalozi za datum */}
           <ScrollView
-            style={[styles.listCol, isDesktop && { flex: 1 }]}
-            refreshControl={<RefreshControl refreshing={refreshing} onRefresh={loadDashboard} />}
+            style={[styles.listCol, isDesktop && { flex: 1.1 }]}
+            refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => loadDashboard(selectedDate)} />}
           >
-            {/* Active Workers List */}
+            {/* ========================================================== */}
+            {/* KARTICA 1: EKIPE NA TERENU (Preuzeti nalozi od radnika)      */}
+            {/* ========================================================== */}
             <View style={styles.sectionCard}>
-              <View style={[styles.sectionTitleRow, { justifyContent: 'space-between' }]}>
-                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                  <Users size={16} color={colors.primary} style={{ marginRight: 6 }} />
-                  <Text style={styles.sectionTitle}>Ekipe na terenu ({workers.length})</Text>
-                </View>
-
-                {/* Dugme za unos radnika dostupno Adminu servisa */}
-                {(isAdmin || isOwner || isSuperAdmin) && (
-                  <TouchableOpacity
-                    style={styles.addWorkerTopBtn}
-                    onPress={handleOpenAddWorker}
-                    activeOpacity={0.8}
-                  >
-                    <UserPlus size={13} color="#FFFFFF" style={{ marginRight: 4 }} />
-                    <Text style={styles.addWorkerTopBtnText}>+ Dodaj radnika</Text>
-                  </TouchableOpacity>
-                )}
+              <View style={styles.sectionTitleRow}>
+                <Users size={16} color={colors.primary} style={{ marginRight: 6 }} />
+                <Text style={styles.sectionTitle}>Ekipe na terenu ({fieldOrders.length})</Text>
               </View>
+              <Text style={styles.sectionDescription}>
+                Radni nalozi koje su radnici preuzeli i koji su u toku rada na lokaciji
+              </Text>
 
               <View style={{ gap: 8, marginTop: 8 }}>
-                {workers.length === 0 ? (
-                  <View style={{ paddingVertical: 18, alignItems: 'center' }}>
-                    <Text style={{ fontSize: 13, color: '#94A3B8' }}>Nema unetih radnika za ovaj servis.</Text>
+                {fieldOrders.length === 0 ? (
+                  <View style={styles.emptyStateWrap}>
+                    <Truck size={24} color="#94A3B8" style={{ marginBottom: 4 }} />
+                    <Text style={styles.emptyStateTitle}>Trenutno nema preuzetih radnih naloga na terenu.</Text>
+                    <Text style={styles.emptyStateSub}>Čim radnik prihvati nalog ili krene na lokaciju, nalog će se prikazati ovde.</Text>
                   </View>
                 ) : (
-                  workers.map(w => (
-                    <View key={w.id} style={styles.workerRow}>
-                      <View style={[styles.workerAvatar, { backgroundColor: w.boja_markera || '#059669' }]}>
-                        <Text style={styles.workerAvatarText}>{w.ime ? w.ime.charAt(0) : 'R'}{w.prezime ? w.prezime.charAt(0) : ''}</Text>
-                      </View>
-                      <View style={{ flex: 1, marginLeft: 10 }}>
-                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                          <Text style={styles.workerName}>{w.ime} {w.prezime}</Text>
-                        </View>
-                        <Text style={styles.workerPhone}>📞 {w.telefon}</Text>
-                        {(isAdmin || isOwner || isSuperAdmin) && (
-                          <View style={styles.workerCredsRow}>
-                            <Text style={styles.workerCredsText}>Login: <Text style={{ fontWeight: '700' }}>{w.email}</Text></Text>
-                            <View style={styles.workerPassBadge}>
-                              <Key size={10} color="#7C3AED" style={{ marginRight: 3 }} />
-                              <Text style={styles.workerPassText}>{w.lozinka_tekst || 'majstor123'}</Text>
+                  fieldOrders.map(fo => {
+                    const sb = getStatusBadge(fo.status);
+                    return (
+                      <TouchableOpacity
+                        key={fo.id}
+                        style={styles.fieldOrderCard}
+                        onPress={() => onSelectOrder && onSelectOrder(fo.id)}
+                        activeOpacity={0.7}
+                      >
+                        {/* Gornji red: Radnik i status rada */}
+                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                            <View style={[styles.workerAvatarSmall, { backgroundColor: fo.majstor_boja || '#059669' }]}>
+                              <Text style={styles.workerAvatarSmallText}>
+                                {fo.majstor_ime ? fo.majstor_ime.charAt(0) : 'R'}{fo.majstor_prezime ? fo.majstor_prezime.charAt(0) : ''}
+                              </Text>
+                            </View>
+                            <View>
+                              <Text style={styles.fieldNameText}>{fo.majstor_ime} {fo.majstor_prezime}</Text>
+                              <Text style={styles.fieldPhoneText}>📞 {fo.majstor_telefon || fo.telefon || '-'}</Text>
                             </View>
                           </View>
-                        )}
-                      </View>
-                      <View style={{ alignItems: 'flex-end', gap: 6 }}>
-                        <View style={styles.workerStatusPill}>
-                          <Text style={styles.workerStatusText}>{w.radni_status || 'SLOBODAN'}</Text>
+                          <View style={[styles.statusBadgePill, { backgroundColor: sb.bg }]}>
+                            <Text style={[styles.statusBadgePillText, { color: sb.text }]}>{sb.label}</Text>
+                          </View>
                         </View>
-                        {(isAdmin || isOwner || isSuperAdmin) && (
-                          <TouchableOpacity
-                            onPress={() => handleDeleteWorker(w)}
-                            style={styles.deleteWorkerBtn}
-                            activeOpacity={0.7}
-                            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                          >
-                            <Trash2 size={13} color="#EF4444" />
-                          </TouchableOpacity>
-                        )}
-                      </View>
-                    </View>
-                  ))
+
+                        {/* Podaci o nalogu koji radnik trenutno obavlja */}
+                        <View style={styles.fieldOrderDetailsBox}>
+                          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <Text style={styles.fieldRnNumber}>{fo.broj_naloga}</Text>
+                            <Text style={styles.fieldClientName}>👤 {fo.klijent_ime}</Text>
+                          </View>
+                          <Text style={styles.fieldAddressText}>📍 {fo.adresa}</Text>
+                          {fo.opis_kvara ? (
+                            <Text style={styles.fieldFaultText} numberOfLines={2}>Kvar: {fo.opis_kvara}</Text>
+                          ) : null}
+                        </View>
+                      </TouchableOpacity>
+                    );
+                  })
                 )}
               </View>
             </View>
 
-            {/* Daily Orders List */}
-            <View style={[styles.sectionCard, { marginTop: 12 }]}>
-              <View style={[styles.sectionTitleRow, { justifyContent: 'space-between' }]}>
-                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                  <Briefcase size={16} color={colors.primary} style={{ marginRight: 6 }} />
-                  <Text style={styles.sectionTitle}>Radni nalozi za danas ({orders.length})</Text>
+            {/* ========================================================== */}
+            {/* KARTICA 2: RADNI NALOZI ZA DATUM SA KALENDAROM              */}
+            {/* ========================================================== */}
+            <View style={[styles.sectionCard, { marginTop: 14 }]}>
+              {/* Naslov sekcije sa odabranim datumom */}
+              <View style={styles.sectionTitleRow}>
+                <Briefcase size={16} color={colors.primary} style={{ marginRight: 6 }} />
+                <Text style={styles.sectionTitle}>
+                  Radni nalozi za datum: <Text style={{ color: '#0284C7' }}>{formatDateSerbian(selectedDate)}</Text> ({dateOrders.length})
+                </Text>
+              </View>
+
+              {/* Kalendar navigaciona traka za promenu datuma */}
+              <View style={styles.dateNavBar}>
+                <TouchableOpacity style={styles.dateNavBtn} onPress={handlePrevDay} activeOpacity={0.7}>
+                  <ChevronLeft size={16} color="#0F172A" />
+                  <Text style={styles.dateNavBtnText}>Prethodni dan</Text>
+                </TouchableOpacity>
+
+                <View style={styles.dateDisplayBox}>
+                  <Calendar size={14} color="#0284C7" style={{ marginRight: 5 }} />
+                  <Text style={styles.dateDisplayText}>{formatDateSerbian(selectedDate)}</Text>
                 </View>
 
-                {/* Dugme za KREIRANJE NOVOG RADNOG NALOGA */}
-                {(isAdmin || isOwner || isSuperAdmin) && (
-                  <TouchableOpacity
-                    style={styles.createOrderBtn}
-                    onPress={handleOpenCreateOrder}
-                    activeOpacity={0.8}
-                  >
-                    <Plus size={13} color="#FFFFFF" style={{ marginRight: 4 }} />
-                    <Text style={styles.createOrderBtnText}>+ Novi radni nalog</Text>
+                <TouchableOpacity style={styles.dateNavBtn} onPress={handleNextDay} activeOpacity={0.7}>
+                  <Text style={styles.dateNavBtnText}>Sledeći dan</Text>
+                  <ChevronRight size={16} color="#0F172A" />
+                </TouchableOpacity>
+
+                {selectedDate !== todayStr && (
+                  <TouchableOpacity style={styles.todayQuickBtn} onPress={handleToday} activeOpacity={0.7}>
+                    <Text style={styles.todayQuickBtnText}>Danas</Text>
                   </TouchableOpacity>
                 )}
               </View>
 
+              {/* Filter chips za brzi pregled nepreuzetih naloga za taj datum */}
+              <View style={styles.filterChipsRow}>
+                <TouchableOpacity
+                  style={[styles.filterChip, orderFilter === 'ALL' && styles.filterChipActive]}
+                  onPress={() => setOrderFilter('ALL')}
+                  activeOpacity={0.7}
+                >
+                  <Text style={[styles.filterChipText, orderFilter === 'ALL' && styles.filterChipTextActive]}>
+                    Svi za dan ({orders.filter(o => o.zakazano_za?.startsWith(selectedDate) || o.kreiran_at?.startsWith(selectedDate)).length})
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.filterChip, orderFilter === 'UNASSIGNED_OR_PENDING' && styles.filterChipActiveOrange]}
+                  onPress={() => setOrderFilter('UNASSIGNED_OR_PENDING')}
+                  activeOpacity={0.7}
+                >
+                  <Text style={[styles.filterChipText, orderFilter === 'UNASSIGNED_OR_PENDING' && { color: '#FFFFFF' }]}>
+                    Nepreuzeti / Nedodeljeni
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.filterChip, orderFilter === 'IN_PROGRESS' && styles.filterChipActive]}
+                  onPress={() => setOrderFilter('IN_PROGRESS')}
+                  activeOpacity={0.7}
+                >
+                  <Text style={[styles.filterChipText, orderFilter === 'IN_PROGRESS' && styles.filterChipTextActive]}>
+                    U radu
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
+              {/* Lista naloga za odabrani datum */}
               <View style={{ gap: 10, marginTop: 10 }}>
-                {orders.length === 0 ? (
-                  <View style={{ paddingVertical: 18, alignItems: 'center' }}>
-                    <Text style={{ fontSize: 13, color: '#94A3B8' }}>Nema radnih naloga za danas.</Text>
+                {dateOrders.length === 0 ? (
+                  <View style={styles.emptyStateWrap}>
+                    <Text style={styles.emptyStateTitle}>Nema radnih naloga za datum {formatDateSerbian(selectedDate)}.</Text>
+                    <Text style={styles.emptyStateSub}>Kliknite na dugme "+ Novi nalog" u gornjem zaglavlju da unesete novi nalog.</Text>
                   </View>
                 ) : (
-                  orders.map(o => {
+                  dateOrders.map(o => {
                     const sb = getStatusBadge(o.status);
-                    const hasGeo = o.start_u_opsegu !== null && o.start_u_opsegu !== undefined;
-                    const inZone = Number(o.start_u_opsegu) === 1;
+                    const hasWorker = Boolean(o.majstor_id && (o.majstor_ime || o.majstor_prezime));
 
                     return (
                       <TouchableOpacity
                         key={o.id}
-                        style={styles.orderCardSmall}
+                        style={styles.orderCardDetailed}
                         onPress={() => onSelectOrder && onSelectOrder(o.id)}
                         activeOpacity={0.7}
                       >
+                        {/* 1. Red: Broj naloga (001/2026), status i prioritet */}
                         <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
                           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                            <Text style={styles.orderSmallRn}>{o.broj_naloga}</Text>
+                            <Text style={styles.orderNumberLarge}>{o.broj_naloga}</Text>
                             {o.prioritet === 'HITNO' && (
                               <View style={styles.urgentBadge}>
                                 <Text style={styles.urgentBadgeText}>HITNO</Text>
                               </View>
                             )}
                           </View>
-                          <Text style={[styles.orderSmallStatus, { color: sb.color }]}>{sb.label}</Text>
+                          <View style={[styles.statusBadgePill, { backgroundColor: sb.bg }]}>
+                            <Text style={[styles.statusBadgePillText, { color: sb.text }]}>{sb.label}</Text>
+                          </View>
                         </View>
-                        <Text style={styles.orderSmallClient}>👤 {o.klijent_ime} {o.klijent_telefon ? `(${o.klijent_telefon})` : ''}</Text>
-                        <Text style={styles.orderSmallAddress}>📍 {o.adresa}</Text>
+
+                        {/* 2. Red: Klijent, telefon i adresa */}
+                        <Text style={styles.orderClientText}>👤 {o.klijent_ime} {o.klijent_telefon ? `(${o.klijent_telefon})` : ''}</Text>
+                        <Text style={styles.orderAddressText}>📍 {o.adresa}, {o.grad || 'Smederevo'}</Text>
                         {o.opis_kvara ? (
-                          <Text style={styles.orderSmallFault} numberOfLines={2}>Kvar: {o.opis_kvara}</Text>
+                          <Text style={styles.orderFaultText} numberOfLines={2}>Kvar: {o.opis_kvara}</Text>
                         ) : null}
 
-                        {/* GPS Geofence status bedž */}
-                        {hasGeo && (
-                          <View style={[
-                            styles.geoBadge,
-                            inZone ? styles.geoBadgeIn : styles.geoBadgeOut
-                          ]}>
-                            <Text style={[
-                              styles.geoBadgeText,
-                              inZone ? styles.geoBadgeTextIn : styles.geoBadgeTextOut
-                            ]}>
-                              {inZone
-                                ? `✓ Start u opsegu (${o.start_udaljenost_m || 0}m)`
-                                : `⚠️ Start van opsega (${o.start_udaljenost_m || 0}m)`}
-                            </Text>
+                        {/* 3. Red: Vreme zakazivanja */}
+                        {o.zakazano_za ? (
+                          <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
+                            <Clock size={11} color="#64748B" style={{ marginRight: 4 }} />
+                            <Text style={styles.orderTimeText}>Zakazano za: {o.zakazano_za}</Text>
                           </View>
-                        )}
+                        ) : null}
+
+                        {/* 4. RED — OBAVEZNO NA KRAJU: DODELJENI RADNIK ILI NEDODELJEN SA NARANDŽASTOM POZADINOM */}
+                        <View style={styles.workerAssignmentFooter}>
+                          {hasWorker ? (
+                            <View style={styles.assignedWorkerPill}>
+                              <View style={[styles.workerDotSmall, { backgroundColor: o.majstor_boja || '#059669' }]} />
+                              <Text style={styles.assignedWorkerPillText}>
+                                Dodeljen radnik: <Text style={{ fontWeight: '800' }}>{o.majstor_ime} {o.majstor_prezime}</Text>
+                              </Text>
+                            </View>
+                          ) : (
+                            <View style={styles.unassignedWorkerPill}>
+                              <AlertTriangle size={12} color="#FFFFFF" style={{ marginRight: 5 }} />
+                              <Text style={styles.unassignedWorkerPillText}>Nedodeljen</Text>
+                            </View>
+                          )}
+                        </View>
                       </TouchableOpacity>
                     );
                   })
@@ -525,14 +538,16 @@ export default function DispatcherScreen({ onBackToWorker, onSelectOrder }) {
         </View>
       )}
 
-      {/* MODAL 1: KREIRANJE NOVOG RADNOG NALOGA */}
+      {/* MODAL: KREIRANJE NOVOG RADNOG NALOGA (otvara se klikom na "+ Novi nalog" u headeru) */}
       <Modal visible={showCreateOrderModal} transparent animationType="fade">
         <View style={styles.modalOverlay}>
-          <View style={[styles.modalCard, { maxWidth: 540 }]}>
+          <View style={[styles.modalCard, { maxWidth: 560 }]}>
             <View style={styles.modalHeader}>
               <View>
                 <Text style={styles.modalTitle}>Kreiranje radnog naloga</Text>
-                <Text style={styles.modalSub}>Unos nove intervencije za servis: {user?.firma_naziv || 'Vaš servis'}</Text>
+                <Text style={styles.modalSub}>
+                  Nalog dobija jedinstveni broj formata 001/2026 za servis: {user?.firma_naziv || 'Vaš servis'}
+                </Text>
               </View>
               <TouchableOpacity onPress={() => setShowCreateOrderModal(false)} style={styles.closeBtn} activeOpacity={0.7}>
                 <X size={18} color="#64748B" />
@@ -546,8 +561,8 @@ export default function DispatcherScreen({ onBackToWorker, onSelectOrder }) {
               </View>
             ) : null}
 
-            <ScrollView style={{ maxHeight: 460 }}>
-              {/* Sekcija: Klijent i lokacija */}
+            <ScrollView style={{ maxHeight: 470 }}>
+              {/* Sekcija 1: Klijent i lokacija */}
               <Text style={styles.sectionSubtitle}>1. Podaci o klijentu i adresi</Text>
 
               <View style={styles.formRow2}>
@@ -562,7 +577,7 @@ export default function DispatcherScreen({ onBackToWorker, onSelectOrder }) {
                   />
                 </View>
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.label}>Telefon klijenta</Text>
+                  <Text style={styles.label}>Broj telefona</Text>
                   <TextInput
                     style={styles.input}
                     value={orderForm.telefon}
@@ -581,7 +596,7 @@ export default function DispatcherScreen({ onBackToWorker, onSelectOrder }) {
                     style={styles.input}
                     value={orderForm.adresa}
                     onChangeText={(t) => setOrderForm(p => ({ ...p, adresa: t }))}
-                    placeholder="Ulica i broj (npr. Knez Mihailova 12)"
+                    placeholder="Ulica i broj"
                     placeholderTextColor="#94A3B8"
                   />
                 </View>
@@ -597,7 +612,7 @@ export default function DispatcherScreen({ onBackToWorker, onSelectOrder }) {
                 </View>
               </View>
 
-              {/* Sekcija: Detalji intervencije */}
+              {/* Sekcija 2: Detalji intervencije i prioritet */}
               <Text style={[styles.sectionSubtitle, { marginTop: 12 }]}>2. Detalji intervencije i prioritet</Text>
 
               <Text style={styles.label}>Tip intervencije:</Text>
@@ -642,14 +657,14 @@ export default function DispatcherScreen({ onBackToWorker, onSelectOrder }) {
                 style={[styles.input, { minHeight: 65, textAlignVertical: 'top' }]}
                 value={orderForm.opis_kvara}
                 onChangeText={(t) => setOrderForm(p => ({ ...p, opis_kvara: t }))}
-                placeholder="Detaljan opis problema (npr. Klima uređaj ne hladi dovoljno, voda curi sa unutrašnje jedinice...)"
+                placeholder="Detaljan opis problema (npr. Bojler ne greje vodu, klima uređaj curi...)"
                 placeholderTextColor="#94A3B8"
                 multiline
                 numberOfLines={3}
               />
 
-              {/* Sekcija: Dodeljivanje majstora i termin */}
-              <Text style={[styles.sectionSubtitle, { marginTop: 12 }]}>3. Dodeljivanje majstoru i termin</Text>
+              {/* Sekcija 3: Termin i Dodeljivanje već unetog radnika iz padajućeg menija */}
+              <Text style={[styles.sectionSubtitle, { marginTop: 12 }]}>3. Termin i dodeljivanje radnika (Opciono)</Text>
 
               <View style={styles.formRow2}>
                 <View style={{ flex: 1 }}>
@@ -668,31 +683,33 @@ export default function DispatcherScreen({ onBackToWorker, onSelectOrder }) {
                     style={styles.input}
                     value={orderForm.zakazano_vreme}
                     onChangeText={(t) => setOrderForm(p => ({ ...p, zakazano_vreme: t }))}
-                    placeholder="npr. 11:30"
+                    placeholder="npr. 10:00"
                     placeholderTextColor="#94A3B8"
                   />
                 </View>
               </View>
 
-              <Text style={styles.label}>Dodeli radniku na terenu:</Text>
+              <Text style={styles.label}>Izbor radnika iz baze (može se odabrati, ali nije obavezno):</Text>
               <View style={{ gap: 6, marginBottom: 12 }}>
+                {/* Opcija 1: Neraspoređen / Nedodeljen */}
                 <TouchableOpacity
                   style={[
                     styles.workerSelectCard,
-                    !orderForm.majstor_id && styles.workerSelectCardActive
+                    !orderForm.majstor_id && styles.workerSelectCardActiveOrange
                   ]}
                   onPress={() => setOrderForm(p => ({ ...p, majstor_id: '' }))}
                   activeOpacity={0.8}
                 >
                   <View style={{ flex: 1 }}>
-                    <Text style={[styles.workerSelectName, !orderForm.majstor_id && { color: '#0369A1' }]}>
-                      Čeka raspoređivanje (Neraspoređen)
+                    <Text style={[styles.workerSelectName, !orderForm.majstor_id && { color: '#C2410C' }]}>
+                      ⚠️ Bez dodele radnika (Nedodeljen)
                     </Text>
-                    <Text style={styles.workerSelectSub}>Status naloga biće KREIRANO</Text>
+                    <Text style={styles.workerSelectSub}>Nalog će se kreirati sa statusom KREIRANO i oznakom Nedodeljen</Text>
                   </View>
-                  {!orderForm.majstor_id && <Check size={16} color="#0284C7" />}
+                  {!orderForm.majstor_id && <Check size={16} color="#EA580C" />}
                 </TouchableOpacity>
 
+                {/* Opcija 2+: Ranije uneti radnici ovog servisa */}
                 {workers.map(w => {
                   const isSel = String(orderForm.majstor_id) === String(w.id);
                   return (
@@ -739,139 +756,6 @@ export default function DispatcherScreen({ onBackToWorker, onSelectOrder }) {
                   <ActivityIndicator size="small" color="#FFFFFF" />
                 ) : (
                   <Text style={styles.saveBtnText}>Kreiraj radni nalog</Text>
-                )}
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
-
-      {/* MODAL 2: DODAVANJE RADNIKA ZA SERVIS */}
-      <Modal visible={showAddModal} transparent animationType="fade">
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalCard}>
-            <View style={styles.modalHeader}>
-              <View>
-                <Text style={styles.modalTitle}>Novi radnik servisa</Text>
-                <Text style={styles.modalSub}>Unos člana ekipe na terenu</Text>
-              </View>
-              <TouchableOpacity onPress={() => setShowAddModal(false)} style={styles.closeBtn} activeOpacity={0.7}>
-                <X size={18} color="#64748B" />
-              </TouchableOpacity>
-            </View>
-
-            <View style={styles.firmAutoInfoBox}>
-              <Building2 size={16} color="#0284C7" style={{ marginRight: 8 }} />
-              <View style={{ flex: 1 }}>
-                <Text style={styles.firmAutoInfoTitle}>Pripadnost servisu (Automatski po loginu):</Text>
-                <Text style={styles.firmAutoInfoVal}>{user?.firma_naziv || 'Vaš servis'} (ID #{firmId})</Text>
-              </View>
-            </View>
-
-            {workerError ? (
-              <View style={styles.errBox}>
-                <AlertTriangle size={15} color="#DC2626" style={{ marginRight: 6 }} />
-                <Text style={styles.errText}>{workerError}</Text>
-              </View>
-            ) : null}
-
-            <ScrollView style={{ maxHeight: 420 }}>
-              <View style={styles.formRow2}>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.label}>Ime radnika *</Text>
-                  <TextInput
-                    style={styles.input}
-                    value={workerForm.ime}
-                    onChangeText={(t) => setWorkerForm(p => ({ ...p, ime: t }))}
-                    placeholder="npr. Nikola"
-                    placeholderTextColor="#94A3B8"
-                  />
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.label}>Prezime radnika *</Text>
-                  <TextInput
-                    style={styles.input}
-                    value={workerForm.prezime}
-                    onChangeText={(t) => setWorkerForm(p => ({ ...p, prezime: t }))}
-                    placeholder="npr. Petrović"
-                    placeholderTextColor="#94A3B8"
-                  />
-                </View>
-              </View>
-
-              <Text style={styles.label}>Broj telefona *</Text>
-              <TextInput
-                style={styles.input}
-                value={workerForm.telefon}
-                onChangeText={(t) => setWorkerForm(p => ({ ...p, telefon: t }))}
-                placeholder="06x-xxx-xxxx"
-                placeholderTextColor="#94A3B8"
-                keyboardType="phone-pad"
-              />
-
-              <Text style={styles.label}>Korisničko ime / Email za prijavu *</Text>
-              <TextInput
-                style={styles.input}
-                value={workerForm.email}
-                onChangeText={(t) => setWorkerForm(p => ({ ...p, email: t }))}
-                placeholder="nikola@servis.rs"
-                placeholderTextColor="#94A3B8"
-                autoCapitalize="none"
-                keyboardType="email-address"
-              />
-
-              <Text style={styles.label}>Lozinka (vidljiva) *</Text>
-              <TextInput
-                style={styles.input}
-                value={workerForm.lozinka}
-                onChangeText={(t) => setWorkerForm(p => ({ ...p, lozinka: t }))}
-                placeholder="Unesite lozinku (podrazumevano majstor123)"
-                placeholderTextColor="#94A3B8"
-                autoCapitalize="none"
-              />
-
-              <Text style={styles.label}>Boja markera na mapi terena:</Text>
-              <View style={styles.colorPickerRow}>
-                {MARKER_COLORS.map(c => {
-                  const isSel = workerForm.boja_markera === c.color;
-                  return (
-                    <TouchableOpacity
-                      key={c.color}
-                      style={[
-                        styles.colorCircle,
-                        { backgroundColor: c.color },
-                        isSel && styles.colorCircleActive
-                      ]}
-                      onPress={() => setWorkerForm(p => ({ ...p, boja_markera: c.color }))}
-                      activeOpacity={0.8}
-                    >
-                      {isSel && <Check size={14} color="#FFFFFF" />}
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
-            </ScrollView>
-
-            <View style={styles.modalActions}>
-              <TouchableOpacity
-                style={styles.cancelBtn}
-                onPress={() => setShowAddModal(false)}
-                disabled={savingWorker}
-                activeOpacity={0.8}
-              >
-                <Text style={styles.cancelBtnText}>Odustani</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={[styles.saveBtn, savingWorker && { opacity: 0.7 }]}
-                onPress={handleSaveWorker}
-                disabled={savingWorker}
-                activeOpacity={0.8}
-              >
-                {savingWorker ? (
-                  <ActivityIndicator size="small" color="#FFFFFF" />
-                ) : (
-                  <Text style={styles.saveBtnText}>Sačuvaj radnika</Text>
                 )}
               </TouchableOpacity>
             </View>
@@ -1018,123 +902,203 @@ const styles = StyleSheet.create({
   sectionTitleRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingBottom: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F1F5F9'
+    paddingBottom: 6
   },
   sectionTitle: {
     fontSize: 13.5,
     fontWeight: '800',
     color: '#0F172A'
   },
-  addWorkerTopBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#0284C7',
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 8
-  },
-  addWorkerTopBtnText: {
-    color: '#FFFFFF',
-    fontSize: 11.5,
-    fontWeight: '700'
-  },
-  createOrderBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#059669',
-    paddingHorizontal: 11,
-    paddingVertical: 5.5,
-    borderRadius: 8
-  },
-  createOrderBtnText: {
-    color: '#FFFFFF',
-    fontSize: 11.5,
-    fontWeight: '700'
-  },
-  workerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F8FAFC'
-  },
-  workerAvatar: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    justifyContent: 'center',
-    alignItems: 'center'
-  },
-  workerAvatarText: {
-    color: '#FFFFFF',
-    fontWeight: '800',
-    fontSize: 13
-  },
-  workerName: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#0F172A'
-  },
-  workerPhone: {
+  sectionDescription: {
     fontSize: 11,
     color: '#64748B',
-    marginTop: 1
+    marginBottom: 8
   },
-  workerCredsRow: {
-    flexDirection: 'row',
+  emptyStateWrap: {
+    paddingVertical: 18,
+    paddingHorizontal: 12,
     alignItems: 'center',
-    gap: 6,
-    marginTop: 3,
-    flexWrap: 'wrap'
-  },
-  workerCredsText: {
-    fontSize: 10.5,
-    color: '#64748B'
-  },
-  workerPassBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#F5F3FF',
+    backgroundColor: '#F8FAFC',
+    borderRadius: 10,
     borderWidth: 1,
-    borderColor: '#DDD6FE',
-    borderRadius: 5,
-    paddingHorizontal: 5,
-    paddingVertical: 1.5
+    borderColor: '#E2E8F0'
   },
-  workerPassText: {
-    fontSize: 10,
+  emptyStateTitle: {
+    fontSize: 12.5,
     fontWeight: '700',
-    color: '#6D28D9'
+    color: '#475569',
+    textAlign: 'center'
   },
-  workerStatusPill: {
-    backgroundColor: '#F1F5F9',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 6
+  emptyStateSub: {
+    fontSize: 11,
+    color: '#94A3B8',
+    marginTop: 2,
+    textAlign: 'center'
   },
-  workerStatusText: {
-    fontSize: 10.5,
-    fontWeight: '800',
-    color: '#475569'
-  },
-  deleteWorkerBtn: {
-    padding: 4,
-    borderRadius: 6,
-    backgroundColor: '#FEF2F2'
-  },
-  orderCardSmall: {
+
+  // Ekipe na terenu - kartice
+  fieldOrderCard: {
     backgroundColor: '#F8FAFC',
     borderRadius: 10,
     padding: 11,
     borderWidth: 1,
     borderColor: '#E2E8F0'
   },
-  orderSmallRn: {
+  workerAvatarSmall: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    justifyContent: 'center',
+    alignItems: 'center'
+  },
+  workerAvatarSmallText: {
+    color: '#FFFFFF',
+    fontWeight: '800',
+    fontSize: 11.5
+  },
+  fieldNameText: {
+    fontSize: 12.5,
+    fontWeight: '700',
+    color: '#0F172A'
+  },
+  fieldPhoneText: {
+    fontSize: 10.5,
+    color: '#64748B'
+  },
+  statusBadgePill: {
+    paddingHorizontal: 7,
+    paddingVertical: 2.5,
+    borderRadius: 6
+  },
+  statusBadgePillText: {
+    fontSize: 10,
+    fontWeight: '800'
+  },
+  fieldOrderDetailsBox: {
+    marginTop: 8,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#E2E8F0'
+  },
+  fieldRnNumber: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#0284C7'
+  },
+  fieldClientName: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#0F172A'
+  },
+  fieldAddressText: {
+    fontSize: 11.5,
+    color: '#475569',
+    marginTop: 2
+  },
+  fieldFaultText: {
+    fontSize: 11,
+    color: '#64748B',
+    fontStyle: 'italic',
+    marginTop: 2
+  },
+
+  // Date nav bar (Kalendar kontrola)
+  dateNavBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#F1F5F9',
+    borderRadius: 10,
+    padding: 6,
+    marginTop: 6,
+    marginBottom: 8,
+    flexWrap: 'wrap',
+    gap: 6
+  },
+  dateNavBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 8,
+    paddingVertical: 4.5,
+    borderRadius: 6,
+    backgroundColor: '#FFFFFF'
+  },
+  dateNavBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#0F172A'
+  },
+  dateDisplayBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 8,
+    paddingVertical: 4
+  },
+  dateDisplayText: {
     fontSize: 12.5,
     fontWeight: '800',
-    color: '#0F172A'
+    color: '#0284C7'
+  },
+  todayQuickBtn: {
+    backgroundColor: '#0284C7',
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    borderRadius: 6
+  },
+  todayQuickBtnText: {
+    color: '#FFFFFF',
+    fontSize: 11,
+    fontWeight: '700'
+  },
+  filterChipsRow: {
+    flexDirection: 'row',
+    gap: 6,
+    marginBottom: 10,
+    flexWrap: 'wrap'
+  },
+  filterChip: {
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    borderRadius: 6,
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0'
+  },
+  filterChipActive: {
+    backgroundColor: '#0284C7',
+    borderColor: '#0284C7'
+  },
+  filterChipActiveOrange: {
+    backgroundColor: '#EA580C',
+    borderColor: '#EA580C'
+  },
+  filterChipText: {
+    fontSize: 10.5,
+    fontWeight: '700',
+    color: '#64748B'
+  },
+  filterChipTextActive: {
+    color: '#FFFFFF'
+  },
+
+  // Kartica radnog naloga u listi datuma
+  orderCardDetailed: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 10,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 3,
+    elevation: 2
+  },
+  orderNumberLarge: {
+    fontSize: 14,
+    fontWeight: '900',
+    color: '#0F172A',
+    letterSpacing: 0.5
   },
   urgentBadge: {
     backgroundColor: '#FEE2E2',
@@ -1149,53 +1113,70 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: '#DC2626'
   },
-  orderSmallStatus: {
-    fontSize: 10.5,
-    fontWeight: '800'
-  },
-  orderSmallClient: {
-    fontSize: 13,
+  orderClientText: {
+    fontSize: 12.5,
     fontWeight: '700',
     color: '#0F172A',
-    marginTop: 4
+    marginTop: 5
   },
-  orderSmallAddress: {
+  orderAddressText: {
     fontSize: 11.5,
     color: '#475569',
     marginTop: 2
   },
-  orderSmallFault: {
+  orderFaultText: {
     fontSize: 11,
     color: '#64748B',
-    marginTop: 4,
+    marginTop: 3,
     fontStyle: 'italic'
   },
-  geoBadge: {
+  orderTimeText: {
+    fontSize: 11,
+    color: '#64748B',
+    fontWeight: '600'
+  },
+
+  // Donji deo kartice sa dodeljenim radnikom ili Nedodeljen
+  workerAssignmentFooter: {
+    marginTop: 8,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#F1F5F9'
+  },
+  assignedWorkerPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
     alignSelf: 'flex-start',
-    marginTop: 6,
-    paddingVertical: 2.5,
-    paddingHorizontal: 7,
+    backgroundColor: '#F0FDF4',
+    borderWidth: 1,
+    borderColor: '#BBF7D0',
+    paddingHorizontal: 8,
+    paddingVertical: 3.5,
     borderRadius: 6
   },
-  geoBadgeIn: {
-    backgroundColor: '#EFF6FF',
-    borderWidth: 1,
-    borderColor: '#BAE6FD'
+  workerDotSmall: {
+    width: 7,
+    height: 7,
+    borderRadius: 3.5,
+    marginRight: 6
   },
-  geoBadgeOut: {
-    backgroundColor: '#FEF2F2',
-    borderWidth: 1,
-    borderColor: '#FECACA'
+  assignedWorkerPillText: {
+    fontSize: 11,
+    color: '#15803D'
   },
-  geoBadgeText: {
-    fontSize: 10.5,
-    fontWeight: '800'
+  unassignedWorkerPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    backgroundColor: '#EA580C', // Narandžasta pozadina
+    paddingHorizontal: 8,
+    paddingVertical: 3.5,
+    borderRadius: 6
   },
-  geoBadgeTextIn: {
-    color: '#0369A1'
-  },
-  geoBadgeTextOut: {
-    color: '#DC2626'
+  unassignedWorkerPillText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#FFFFFF' // Beli tekst na narandžastoj pozadini
   },
 
   // Modal stilovi
@@ -1210,7 +1191,6 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     borderRadius: 16,
     width: '100%',
-    maxWidth: 480,
     padding: 20,
     borderWidth: 1,
     borderColor: '#E2E8F0',
@@ -1237,7 +1217,7 @@ const styles = StyleSheet.create({
     marginTop: 2
   },
   sectionSubtitle: {
-    fontSize: 12,
+    fontSize: 11.5,
     fontWeight: '800',
     color: '#0F172A',
     marginBottom: 8,
@@ -1251,27 +1231,6 @@ const styles = StyleSheet.create({
     backgroundColor: '#F1F5F9',
     justifyContent: 'center',
     alignItems: 'center'
-  },
-  firmAutoInfoBox: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#F0F9FF',
-    borderWidth: 1,
-    borderColor: '#BAE6FD',
-    borderRadius: 10,
-    padding: 10,
-    marginBottom: 14
-  },
-  firmAutoInfoTitle: {
-    fontSize: 11,
-    color: '#0369A1',
-    fontWeight: '700'
-  },
-  firmAutoInfoVal: {
-    fontSize: 12.5,
-    fontWeight: '800',
-    color: '#0C4A6E',
-    marginTop: 1
   },
   errBox: {
     flexDirection: 'row',
@@ -1351,6 +1310,10 @@ const styles = StyleSheet.create({
     backgroundColor: '#F0F9FF',
     borderColor: '#BAE6FD'
   },
+  workerSelectCardActiveOrange: {
+    backgroundColor: '#FFF7ED',
+    borderColor: '#FDBA74'
+  },
   workerSelectDot: {
     width: 10,
     height: 10,
@@ -1366,23 +1329,6 @@ const styles = StyleSheet.create({
     fontSize: 10.5,
     color: '#64748B',
     marginTop: 2
-  },
-  colorPickerRow: {
-    flexDirection: 'row',
-    gap: 10,
-    marginTop: 6,
-    marginBottom: 12
-  },
-  colorCircle: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    justifyContent: 'center',
-    alignItems: 'center'
-  },
-  colorCircleActive: {
-    borderWidth: 3,
-    borderColor: '#0F172A'
   },
   modalActions: {
     flexDirection: 'row',
