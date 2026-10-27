@@ -37,7 +37,8 @@ import {
   Calendar,
   Filter,
   UserCheck,
-  UserX
+  UserX,
+  CalendarDays
 } from 'lucide-react-native';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../services/api';
@@ -67,6 +68,150 @@ const formatDateSerbian = (dateStr) => {
   return dateStr;
 };
 
+// ==========================================================
+// INTERAKTIVNI KALENDAR KOMPONENTA SA MESECIMA I DANIMA
+// ==========================================================
+function MonthCalendarPicker({ value, onChange, ordersCountByDate = {} }) {
+  const [currentMonth, setCurrentMonth] = useState(() => {
+    if (!value) return new Date();
+    const parts = value.split('-');
+    if (parts.length === 3) {
+      return new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, 1);
+    }
+    return new Date();
+  });
+
+  useEffect(() => {
+    if (value) {
+      const parts = value.split('-');
+      if (parts.length === 3) {
+        setCurrentMonth(new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, 1));
+      }
+    }
+  }, [value]);
+
+  const year = currentMonth.getFullYear();
+  const month = currentMonth.getMonth(); // 0-11
+
+  const monthNames = [
+    'Januar', 'Februar', 'Mart', 'April', 'Maj', 'Jun',
+    'Jul', 'Avgust', 'Septembar', 'Oktobar', 'Novembar', 'Decembar'
+  ];
+
+  const prevMonth = () => {
+    setCurrentMonth(new Date(year, month - 1, 1));
+  };
+
+  const nextMonth = () => {
+    setCurrentMonth(new Date(year, month + 1, 1));
+  };
+
+  const setToday = () => {
+    const today = new Date();
+    setCurrentMonth(new Date(today.getFullYear(), today.getMonth(), 1));
+    onChange(today.toISOString().split('T')[0]);
+  };
+
+  const firstDayRaw = new Date(year, month, 1).getDay();
+  const startDayOffset = (firstDayRaw + 6) % 7; // Ponedeljak = 0
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+
+  const daysGrid = [];
+  for (let i = 0; i < startDayOffset; i++) {
+    daysGrid.push({ empty: true, id: `empty-${i}` });
+  }
+  for (let d = 1; d <= daysInMonth; d++) {
+    const dStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+    daysGrid.push({ day: d, dateStr: dStr, empty: false, id: `day-${d}` });
+  }
+
+  const todayStr = new Date().toISOString().split('T')[0];
+
+  return (
+    <View style={styles.calCard}>
+      {/* Zaglavlje kalendara sa navigacijom kroz mesece */}
+      <View style={styles.calHeaderRow}>
+        <TouchableOpacity onPress={prevMonth} style={styles.calNavBtn} activeOpacity={0.7}>
+          <ChevronLeft size={16} color="#0F172A" />
+        </TouchableOpacity>
+
+        <View style={{ alignItems: 'center' }}>
+          <Text style={styles.calMonthTitle}>{monthNames[month]} {year}</Text>
+          <Text style={styles.calMonthSub}>Izaberite dan za prikaz radnih naloga</Text>
+        </View>
+
+        <TouchableOpacity onPress={nextMonth} style={styles.calNavBtn} activeOpacity={0.7}>
+          <ChevronRight size={16} color="#0F172A" />
+        </TouchableOpacity>
+      </View>
+
+      {/* Dani u nedelji */}
+      <View style={styles.calWeekdaysRow}>
+        {['Pon', 'Uto', 'Sre', 'Čet', 'Pet', 'Sub', 'Ned'].map((wd, i) => (
+          <Text key={i} style={[styles.calWeekdayText, (i === 5 || i === 6) && { color: '#DC2626' }]}>
+            {wd}
+          </Text>
+        ))}
+      </View>
+
+      {/* Mreža dana u mesecu */}
+      <View style={styles.calDaysGrid}>
+        {daysGrid.map((item) => {
+          if (item.empty) {
+            return <View key={item.id} style={styles.calEmptyCell} />;
+          }
+
+          const isSelected = value === item.dateStr;
+          const isToday = todayStr === item.dateStr;
+          const count = ordersCountByDate[item.dateStr] || 0;
+
+          return (
+            <TouchableOpacity
+              key={item.id}
+              style={[
+                styles.calDayCell,
+                isSelected && styles.calDayCellSelected,
+                isToday && !isSelected && styles.calDayCellToday
+              ]}
+              onPress={() => onChange(item.dateStr)}
+              activeOpacity={0.7}
+            >
+              <Text
+                style={[
+                  styles.calDayNumber,
+                  isSelected && styles.calDayNumberSelected,
+                  isToday && !isSelected && styles.calDayNumberToday
+                ]}
+              >
+                {item.day}
+              </Text>
+              {count > 0 && !isSelected && (
+                <View style={styles.calBadgeDot}>
+                  <Text style={styles.calBadgeDotText}>{count > 9 ? '9+' : count}</Text>
+                </View>
+              )}
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+
+      {/* Donja linija kalendara: Dugme za danas i info */}
+      <View style={styles.calFooterBar}>
+        <TouchableOpacity style={styles.calTodayBtn} onPress={setToday} activeOpacity={0.7}>
+          <Calendar size={13} color="#0284C7" style={{ marginRight: 4 }} />
+          <Text style={styles.calTodayBtnText}>Danas</Text>
+        </TouchableOpacity>
+        <Text style={styles.calSelectedInfo}>
+          Izabran datum: <Text style={{ fontWeight: '800', color: '#0284C7' }}>{formatDateSerbian(value)}</Text>
+        </Text>
+      </View>
+    </View>
+  );
+}
+
+// ==========================================================
+// GLAVNI EKRAN DISPEČERA
+// ==========================================================
 export default function DispatcherScreen({ onBackToWorker, onSelectOrder }) {
   const { user, firmId, logout, isAdmin, isOwner, isSuperAdmin } = useAuth();
   const { width } = useWindowDimensions();
@@ -74,6 +219,7 @@ export default function DispatcherScreen({ onBackToWorker, onSelectOrder }) {
 
   const todayStr = new Date().toISOString().split('T')[0];
   const [selectedDate, setSelectedDate] = useState(todayStr);
+  const [showCalendar, setShowCalendar] = useState(true); // Kalendar sa mesecima i danima otvoren
   const [orderFilter, setOrderFilter] = useState('ALL'); // 'ALL' | 'UNASSIGNED_OR_PENDING' | 'IN_PROGRESS' | 'DONE'
 
   const [loading, setLoading] = useState(true);
@@ -117,24 +263,14 @@ export default function DispatcherScreen({ onBackToWorker, onSelectOrder }) {
     return () => clearInterval(interval);
   }, [loadDashboard, selectedDate]);
 
-  // Navigacija kroz dane
-  const handlePrevDay = () => {
-    const dt = new Date(selectedDate);
-    dt.setDate(dt.getDate() - 1);
-    const newStr = dt.toISOString().split('T')[0];
-    setSelectedDate(newStr);
-  };
-
-  const handleNextDay = () => {
-    const dt = new Date(selectedDate);
-    dt.setDate(dt.getDate() + 1);
-    const newStr = dt.toISOString().split('T')[0];
-    setSelectedDate(newStr);
-  };
-
-  const handleToday = () => {
-    setSelectedDate(todayStr);
-  };
+  // Broj naloga po danima za indikatore u kalendaru
+  const ordersCountByDate = {};
+  orders.forEach(o => {
+    const d = o.zakazano_za ? o.zakazano_za.split(' ')[0] : (o.kreiran_at ? o.kreiran_at.split(' ')[0] : '');
+    if (d) {
+      ordersCountByDate[d] = (ordersCountByDate[d] || 0) + 1;
+    }
+  });
 
   // Radni nalozi koji su preuzeti od strane radnika na terenu
   const fieldOrders = orders.filter(o => 
@@ -171,7 +307,7 @@ export default function DispatcherScreen({ onBackToWorker, onSelectOrder }) {
       tip_intervencije: 'REDOVAN_SERVIS',
       prioritet: 'NORMALAN',
       opis_kvara: '',
-      majstor_id: '', // Podrazumevano: Bez dodele (može da se odabere ali ne mora)
+      majstor_id: '', // Podrazumevano: Bez dodele radnika
       zakazano_datum: selectedDate || todayStr,
       zakazano_vreme: '10:00'
     });
@@ -260,7 +396,6 @@ export default function DispatcherScreen({ onBackToWorker, onSelectOrder }) {
         </View>
 
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-          {/* Jedino dugme za kreiranje novog radnog naloga */}
           {(isAdmin || isOwner || isSuperAdmin) && (
             <TouchableOpacity
               style={styles.headerCreateBtn}
@@ -324,7 +459,7 @@ export default function DispatcherScreen({ onBackToWorker, onSelectOrder }) {
             </View>
           </View>
 
-          {/* Desna kolona: Ekipe na terenu i Radni nalozi za datum */}
+          {/* Desna kolona: Ekipe na terenu i Radni nalozi za datum sa kalendarom */}
           <ScrollView
             style={[styles.listCol, isDesktop && { flex: 1.1 }]}
             refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => loadDashboard(selectedDate)} />}
@@ -358,7 +493,6 @@ export default function DispatcherScreen({ onBackToWorker, onSelectOrder }) {
                         onPress={() => onSelectOrder && onSelectOrder(fo.id)}
                         activeOpacity={0.7}
                       >
-                        {/* Gornji red: Radnik i status rada */}
                         <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
                           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                             <View style={[styles.workerAvatarSmall, { backgroundColor: fo.majstor_boja || '#059669' }]}>
@@ -376,7 +510,6 @@ export default function DispatcherScreen({ onBackToWorker, onSelectOrder }) {
                           </View>
                         </View>
 
-                        {/* Podaci o nalogu koji radnik trenutno obavlja */}
                         <View style={styles.fieldOrderDetailsBox}>
                           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
                             <Text style={styles.fieldRnNumber}>{fo.broj_naloga}</Text>
@@ -395,43 +528,43 @@ export default function DispatcherScreen({ onBackToWorker, onSelectOrder }) {
             </View>
 
             {/* ========================================================== */}
-            {/* KARTICA 2: RADNI NALOZI ZA DATUM SA KALENDAROM              */}
+            {/* KARTICA 2: RADNI NALOZI ZA DATUM SA KALENDAROM MESECI/DANA  */}
             {/* ========================================================== */}
             <View style={[styles.sectionCard, { marginTop: 14 }]}>
-              {/* Naslov sekcije sa odabranim datumom */}
-              <View style={styles.sectionTitleRow}>
-                <Briefcase size={16} color={colors.primary} style={{ marginRight: 6 }} />
-                <Text style={styles.sectionTitle}>
-                  Radni nalozi za datum: <Text style={{ color: '#0284C7' }}>{formatDateSerbian(selectedDate)}</Text> ({dateOrders.length})
-                </Text>
-              </View>
-
-              {/* Kalendar navigaciona traka za promenu datuma */}
-              <View style={styles.dateNavBar}>
-                <TouchableOpacity style={styles.dateNavBtn} onPress={handlePrevDay} activeOpacity={0.7}>
-                  <ChevronLeft size={16} color="#0F172A" />
-                  <Text style={styles.dateNavBtnText}>Prethodni dan</Text>
-                </TouchableOpacity>
-
-                <View style={styles.dateDisplayBox}>
-                  <Calendar size={14} color="#0284C7" style={{ marginRight: 5 }} />
-                  <Text style={styles.dateDisplayText}>{formatDateSerbian(selectedDate)}</Text>
+              {/* Naslov sekcije sa odabranim datumom i toggle dugmetom */}
+              <View style={[styles.sectionTitleRow, { justifyContent: 'space-between' }]}>
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                  <Briefcase size={16} color={colors.primary} style={{ marginRight: 6 }} />
+                  <Text style={styles.sectionTitle}>
+                    Radni nalozi za datum: <Text style={{ color: '#0284C7' }}>{formatDateSerbian(selectedDate)}</Text> ({dateOrders.length})
+                  </Text>
                 </View>
 
-                <TouchableOpacity style={styles.dateNavBtn} onPress={handleNextDay} activeOpacity={0.7}>
-                  <Text style={styles.dateNavBtnText}>Sledeći dan</Text>
-                  <ChevronRight size={16} color="#0F172A" />
+                <TouchableOpacity
+                  style={styles.toggleCalBtn}
+                  onPress={() => setShowCalendar(p => !p)}
+                  activeOpacity={0.7}
+                >
+                  <CalendarDays size={13} color="#0284C7" style={{ marginRight: 4 }} />
+                  <Text style={styles.toggleCalBtnText}>{showCalendar ? 'Sakrij kalendar' : 'Prikaži kalendar'}</Text>
                 </TouchableOpacity>
-
-                {selectedDate !== todayStr && (
-                  <TouchableOpacity style={styles.todayQuickBtn} onPress={handleToday} activeOpacity={0.7}>
-                    <Text style={styles.todayQuickBtnText}>Danas</Text>
-                  </TouchableOpacity>
-                )}
               </View>
 
+              {/* KALENDAR SA MESECIMA I DANIMA (OTVOREN ZA IZBOR ODREĐENOG DANA) */}
+              {showCalendar && (
+                <View style={{ marginTop: 8 }}>
+                  <MonthCalendarPicker
+                    value={selectedDate}
+                    onChange={(newDate) => {
+                      setSelectedDate(newDate);
+                    }}
+                    ordersCountByDate={ordersCountByDate}
+                  />
+                </View>
+              )}
+
               {/* Filter chips za brzi pregled nepreuzetih naloga za taj datum */}
-              <View style={styles.filterChipsRow}>
+              <View style={[styles.filterChipsRow, { marginTop: 10 }]}>
                 <TouchableOpacity
                   style={[styles.filterChip, orderFilter === 'ALL' && styles.filterChipActive]}
                   onPress={() => setOrderFilter('ALL')}
@@ -464,11 +597,11 @@ export default function DispatcherScreen({ onBackToWorker, onSelectOrder }) {
               </View>
 
               {/* Lista naloga za odabrani datum */}
-              <View style={{ gap: 10, marginTop: 10 }}>
+              <View style={{ gap: 10, marginTop: 8 }}>
                 {dateOrders.length === 0 ? (
                   <View style={styles.emptyStateWrap}>
                     <Text style={styles.emptyStateTitle}>Nema radnih naloga za datum {formatDateSerbian(selectedDate)}.</Text>
-                    <Text style={styles.emptyStateSub}>Kliknite na dugme "+ Novi nalog" u gornjem zaglavlju da unesete novi nalog.</Text>
+                    <Text style={styles.emptyStateSub}>Izaberite drugi dan na kalendaru iznad ili kliknite na "+ Novi nalog" u headeru.</Text>
                   </View>
                 ) : (
                   dateOrders.map(o => {
@@ -914,6 +1047,21 @@ const styles = StyleSheet.create({
     color: '#64748B',
     marginBottom: 8
   },
+  toggleCalBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F0F9FF',
+    borderWidth: 1,
+    borderColor: '#BAE6FD',
+    paddingHorizontal: 8,
+    paddingVertical: 3.5,
+    borderRadius: 6
+  },
+  toggleCalBtnText: {
+    fontSize: 10.5,
+    fontWeight: '700',
+    color: '#0284C7'
+  },
   emptyStateWrap: {
     paddingVertical: 18,
     paddingHorizontal: 12,
@@ -1002,58 +1150,146 @@ const styles = StyleSheet.create({
     marginTop: 2
   },
 
-  // Date nav bar (Kalendar kontrola)
-  dateNavBar: {
+  // ==========================================================
+  // KALENDAR STILOVI (Meseci i dani)
+  // ==========================================================
+  calCard: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 12,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    marginBottom: 8
+  },
+  calHeaderRow: {
     flexDirection: 'row',
-    alignItems: 'center',
     justifyContent: 'space-between',
-    backgroundColor: '#F1F5F9',
-    borderRadius: 10,
-    padding: 6,
-    marginTop: 6,
-    marginBottom: 8,
-    flexWrap: 'wrap',
-    gap: 6
-  },
-  dateNavBtn: {
-    flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 8,
-    paddingVertical: 4.5,
-    borderRadius: 6,
-    backgroundColor: '#FFFFFF'
+    marginBottom: 8
   },
-  dateNavBtnText: {
-    fontSize: 11,
-    fontWeight: '700',
+  calNavBtn: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    justifyContent: 'center',
+    alignItems: 'center'
+  },
+  calMonthTitle: {
+    fontSize: 13.5,
+    fontWeight: '800',
     color: '#0F172A'
   },
-  dateDisplayBox: {
+  calMonthSub: {
+    fontSize: 10,
+    color: '#64748B',
+    marginTop: 1
+  },
+  calWeekdaysRow: {
+    flexDirection: 'row',
+    borderBottomWidth: 1,
+    borderBottomColor: '#E2E8F0',
+    paddingBottom: 4,
+    marginBottom: 6
+  },
+  calWeekdayText: {
+    flex: 1,
+    textAlign: 'center',
+    fontSize: 10.5,
+    fontWeight: '700',
+    color: '#475569'
+  },
+  calDaysGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap'
+  },
+  calEmptyCell: {
+    width: '14.28%',
+    height: 32
+  },
+  calDayCell: {
+    width: '14.28%',
+    height: 32,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderRadius: 6,
+    marginVertical: 1,
+    position: 'relative'
+  },
+  calDayCellSelected: {
+    backgroundColor: '#0284C7'
+  },
+  calDayCellToday: {
+    borderWidth: 1.5,
+    borderColor: '#0284C7',
+    backgroundColor: '#F0F9FF'
+  },
+  calDayNumber: {
+    fontSize: 11.5,
+    fontWeight: '600',
+    color: '#0F172A'
+  },
+  calDayNumberSelected: {
+    color: '#FFFFFF',
+    fontWeight: '900'
+  },
+  calDayNumberToday: {
+    color: '#0284C7',
+    fontWeight: '800'
+  },
+  calBadgeDot: {
+    position: 'absolute',
+    top: 2,
+    right: 4,
+    backgroundColor: '#0284C7',
+    borderRadius: 5,
+    minWidth: 10,
+    height: 10,
+    paddingHorizontal: 2,
+    justifyContent: 'center',
+    alignItems: 'center'
+  },
+  calBadgeDotText: {
+    color: '#FFFFFF',
+    fontSize: 7.5,
+    fontWeight: '800'
+  },
+  calFooterBar: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: 8,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#E2E8F0'
+  },
+  calTodayBtn: {
     flexDirection: 'row',
     alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#BAE6FD',
+    borderRadius: 6,
     paddingHorizontal: 8,
-    paddingVertical: 4
+    paddingVertical: 3.5
   },
-  dateDisplayText: {
-    fontSize: 12.5,
-    fontWeight: '800',
+  calTodayBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
     color: '#0284C7'
   },
-  todayQuickBtn: {
-    backgroundColor: '#0284C7',
-    paddingHorizontal: 9,
-    paddingVertical: 4,
-    borderRadius: 6
-  },
-  todayQuickBtnText: {
-    color: '#FFFFFF',
+  calSelectedInfo: {
     fontSize: 11,
-    fontWeight: '700'
+    color: '#64748B'
   },
+
+  // Filter chips za brzi pregled
   filterChipsRow: {
     flexDirection: 'row',
     gap: 6,
-    marginBottom: 10,
+    marginBottom: 8,
     flexWrap: 'wrap'
   },
   filterChip: {
@@ -1176,7 +1412,7 @@ const styles = StyleSheet.create({
   unassignedWorkerPillText: {
     fontSize: 11,
     fontWeight: '800',
-    color: '#FFFFFF' // Beli tekst na narandžastoj pozadini
+    color: '#FFFFFF'
   },
 
   // Modal stilovi
