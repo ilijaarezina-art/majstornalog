@@ -183,6 +183,29 @@ function sendResponse($status, $dataOrMessage, $statusCode = 200) {
 }
 
 // ==========================================================
+// Pomoćna matematička funkcija za proračun geodetske razdaljine u metrima (Haversine formula)
+function calculateDistanceInMeters($lat1, $lon1, $lat2, $lon2) {
+    if ($lat1 === null || $lon1 === null || $lat2 === null || $lon2 === null) return null;
+    $lat1 = floatval($lat1);
+    $lon1 = floatval($lon1);
+    $lat2 = floatval($lat2);
+    $lon2 = floatval($lon2);
+    if ($lat1 == 0 || $lon1 == 0 || $lat2 == 0 || $lon2 == 0) return null;
+
+    $earthRadius = 6371000; // metri
+    $latFrom = deg2rad($lat1);
+    $lonFrom = deg2rad($lon1);
+    $latTo = deg2rad($lat2);
+    $lonTo = deg2rad($lon2);
+
+    $latDelta = $latTo - $latFrom;
+    $lonDelta = $lonTo - $lonFrom;
+
+    $angle = 2 * asin(sqrt(pow(sin($latDelta / 2), 2) +
+        cos($latFrom) * cos($latTo) * pow(sin($lonDelta / 2), 2)));
+    return intval(round($angle * $earthRadius));
+}
+
 // 1. PRIJAVA NA SISTEM (LOGIN)
 // ==========================================================
 if ($action === 'login') {
@@ -312,28 +335,6 @@ elseif ($action === 'get_order_details') {
     sendResponse('success', $order);
 }
 
-// Pomoćna matematička funkcija za proračun geodetske razdaljine u metrima (Haversine formula)
-function calculateDistanceInMeters($lat1, $lon1, $lat2, $lon2) {
-    if ($lat1 === null || $lon1 === null || $lat2 === null || $lon2 === null) return null;
-    $lat1 = floatval($lat1);
-    $lon1 = floatval($lon1);
-    $lat2 = floatval($lat2);
-    $lon2 = floatval($lon2);
-    if ($lat1 == 0 || $lon1 == 0 || $lat2 == 0 || $lon2 == 0) return null;
-
-    $earthRadius = 6371000; // metri
-    $latFrom = deg2rad($lat1);
-    $lonFrom = deg2rad($lon1);
-    $latTo = deg2rad($lat2);
-    $lonTo = deg2rad($lon2);
-
-    $latDelta = $latTo - $latFrom;
-    $lonDelta = $lonTo - $lonFrom;
-
-    $angle = 2 * asin(sqrt(pow(sin($latDelta / 2), 2) +
-        cos($latFrom) * cos($latTo) * pow(sin($lonDelta / 2), 2)));
-    return intval(round($angle * $earthRadius));
-}
 
 // ==========================================================
 // 4. PROMENA STATUSA NALOGA (UPDATE_ORDER_STATUS)
