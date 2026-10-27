@@ -214,3 +214,95 @@ export async function reverseGeocode(latitude, longitude) {
   geoCache.set(cacheKey, result);
   return result;
 }
+
+/**
+ * Pronalazi adrese u neposrednoj blizini zadatih koordinata (lat, lng).
+ * Vraća listu prepoznatih adresa sa kućnim brojevima i ulicama sa te lokacije
+ * kako bi korisnik mogao da izabere tačnu adresu i kućni broj.
+ */
+export async function getNearbyAddresses(latitude, longitude) {
+  if (!latitude || !longitude) return [];
+  const latNum = parseFloat(latitude);
+  const lngNum = parseFloat(longitude);
+
+  const candidates = [];
+  const seen = new Set();
+
+  let primaryStreet = '';
+  let primaryCity = 'Smederevo';
+
+  // 1. Reversno geokodiranje same tačke čiode
+  try {
+    const rev = await reverseGeocode(latNum, lngNum);
+    if (rev && rev.street) {
+      primaryStreet = rev.street;
+      primaryCity = rev.city || 'Smederevo';
+      const key = `${rev.street}, ${primaryCity}`.toLowerCase();
+      seen.add(key);
+      candidates.push({
+        id: 'primary-exact',
+        street: rev.street,
+        city: primaryCity,
+        address: `${rev.street}, ${primaryCity}`,
+        lat: latNum,
+        lng: lngNum,
+        isExact: true
+      });
+    }
+  } catch (e) {}
+
+  // 2. Pretraga obližnjih adresa i kućnih brojeva u istoj ulici
+  if (primaryStreet) {
+    const baseStreet = primaryStreet.replace(/\s+\d+[a-zA-Z]?(\/\d+)?$/, '').trim();
+    if (baseStreet.length >= 2) {
+      try {
+        const suggestions = await searchAddressSuggestions(baseStreet, primaryCity);
+        (suggestions || []).forEach(s => {
+          const streetStr = (s.street || s.address.split(',')[0]).trim();
+          const cityStr = s.city || primaryCity;
+          const key = `${streetStr}, ${cityStr}`.toLowerCase();
+
+          if (!seen.has(key) && streetStr.toLowerCase().includes(baseStreet.toLowerCase())) {
+            seen.add(key);
+            const dLat = (s.lat - latNum) * 111000;
+            const dLng = (s.lng - lngNum) * 85000;
+            const dist = Math.sqrt(dLat * dLat + dLng * dLng);
+
+            if (dist < 450) {
+              candidates.push({
+                id: s.id || `sug-${streetStr}`,
+                street: streetStr,
+                city: cityStr,
+                address: `${streetStr}, ${cityStr}`,
+                lat: s.lat,
+                lng: s.lng,
+                distance: dist
+              });
+            }
+          }
+        });
+      } catch (sugErr) {}
+    }
+  }
+
+  // 3. Ako baza nije našla brojeve, ostavi tačnu adresu sa čiode
+  if (candidates.length === 0) {
+    candidates.push({
+      id: 'fallback-pin',
+      street: primaryStreet || 'Odabrana lokacija na mapi',
+      city: primaryCity,
+      address: primaryStreet ? `${primaryStreet}, ${primaryCity}` : `Lokacija (${primaryCity})`,
+      lat: latNum,
+      lng: lngNum,
+      isExact: true
+    });
+  }
+
+  candidates.sort((a, b) => {
+    if (a.isExact) return -1;
+    if (b.isExact) return 1;
+    return (a.distance || 0) - (b.distance || 0);
+  });
+
+  return candidates.slice(0, 5);
+}

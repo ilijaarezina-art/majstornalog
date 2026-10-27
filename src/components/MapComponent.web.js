@@ -20,6 +20,7 @@ export default function MapComponent({
   const routeLineRef = useRef(null);
   const geofenceCircleRef = useRef(null);
   const connectLineRef = useRef(null);
+  const pinPickerInitRef = useRef(false);
 
   useEffect(() => {
     // Inject Leaflet CSS & JS if not already loaded
@@ -122,11 +123,16 @@ export default function MapComponent({
     // 1. PIN PICKER MODE (DEFINISANJE LOKACIJE ČIODOM)
     // ==========================================================
     if (isPinPickerMode) {
-      // Map stays interactive, center pin is rendered over the map via CSS
-      if (clientLocation && clientLocation.lat && clientLocation.lng) {
-        map.setView([clientLocation.lat, clientLocation.lng], 16);
+      // Postavi pogled samo prvi put pri otvaranju; NE resetuj zum kada korisnik odzumira ili zumira mapu!
+      if (!pinPickerInitRef.current) {
+        if (clientLocation && clientLocation.lat && clientLocation.lng) {
+          map.setView([clientLocation.lat, clientLocation.lng], 16);
+          pinPickerInitRef.current = true;
+        }
       }
       return;
+    } else {
+      pinPickerInitRef.current = false;
     }
 
     // ==========================================================

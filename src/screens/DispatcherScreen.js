@@ -46,7 +46,7 @@ import { useAuth } from '../context/AuthContext';
 import { api } from '../services/api';
 import { colors } from '../theme/colors';
 import MapComponent from '../components/MapComponent';
-import { searchAddressSuggestions, reverseGeocode } from '../services/geocoding';
+import { searchAddressSuggestions, reverseGeocode, getNearbyAddresses } from '../services/geocoding';
 
 const TIP_INTERVENCIJE_OPTIONS = [
   { id: 'REDOVAN_SERVIS', label: 'Redovan servis' },
@@ -248,8 +248,10 @@ export default function DispatcherScreen({ onBackToWorker, onSelectOrder }) {
   // Pin picker modal (definisanje dolazne lokacije klijenta čiodom na mapi)
   const [showPinPickerModal, setShowPinPickerModal] = useState(false);
   const [pinPickerCoords, setPinPickerCoords] = useState({ lat: 44.6627, lng: 20.9300 });
-  const [pinPickerResult, setPinPickerResult] = useState(null);
   const [pinPickerMoving, setPinPickerMoving] = useState(false);
+  const [nearbyCandidates, setNearbyCandidates] = useState([]);
+  const [selectedCandidate, setSelectedCandidate] = useState(null);
+  const [isSearchingNearby, setIsSearchingNearby] = useState(false);
 
   // Pokušaj preuzimanja tačne GPS lokacije ulogovanog korisnika preko pregledača
   useEffect(() => {
@@ -409,46 +411,51 @@ export default function DispatcherScreen({ onBackToWorker, onSelectOrder }) {
     const initLat = orderForm.gpsX || myLocation.lat || 44.6627;
     const initLng = orderForm.gpsY || myLocation.lng || 20.9300;
     setPinPickerCoords({ lat: initLat, lng: initLng });
-    setPinPickerResult({
-      street: orderForm.adresa || '',
-      city: orderForm.grad || 'Smederevo',
-      lat: initLat,
-      lng: initLng
-    });
     setPinPickerMoving(false);
+    setIsSearchingNearby(true);
+    setNearbyCandidates([]);
+    setSelectedCandidate(null);
     setShowPinPickerModal(true);
 
-    reverseGeocode(initLat, initLng).then(res => {
-      if (res) {
-        setPinPickerResult(res);
+    getNearbyAddresses(initLat, initLng).then(list => {
+      setNearbyCandidates(list || []);
+      if (list && list.length > 0) {
+        setSelectedCandidate(list[0]);
       }
+      setIsSearchingNearby(false);
     });
   };
 
-  // Pomeranje mape u Pin Picker režimu (pronalazi tačnu ulicu i broj)
+  // Pomeranje mape u Pin Picker režimu (očitava sve adrese i brojeve sa te tačke)
   const handlePinPickerMove = ({ lat, lng, isMoving }) => {
     setPinPickerCoords({ lat, lng });
     setPinPickerMoving(isMoving);
 
     if (!isMoving) {
-      reverseGeocode(lat, lng).then(res => {
-        if (res) {
-          setPinPickerResult(res);
+      setIsSearchingNearby(true);
+      getNearbyAddresses(lat, lng).then(list => {
+        setNearbyCandidates(list || []);
+        if (list && list.length > 0) {
+          setSelectedCandidate(list[0]);
         }
+        setIsSearchingNearby(false);
       });
     }
   };
 
-  // Potvrda lokacije izabrane čiodom na mapi: upisuje pronađenu ulicu i broj u adresu, a grad u grad
-  const handleConfirmPinLocation = () => {
-    if (pinPickerCoords.lat && pinPickerCoords.lng) {
-      const finalStreet = (pinPickerResult?.street || orderForm.adresa || '').trim();
-      const finalCity = (pinPickerResult?.city || orderForm.grad || 'Smederevo').trim();
-
+  // Potvrda odabrane adrese iz ponuđene liste sa te lokacije
+  const handleConfirmSelectedCandidate = () => {
+    if (selectedCandidate) {
       setOrderForm(p => ({
         ...p,
-        adresa: finalStreet || p.adresa,
-        grad: finalCity,
+        adresa: selectedCandidate.street,
+        grad: selectedCandidate.city || 'Smederevo',
+        gpsX: selectedCandidate.lat || pinPickerCoords.lat,
+        gpsY: selectedCandidate.lng || pinPickerCoords.lng
+      }));
+    } else if (pinPickerCoords.lat && pinPickerCoords.lng) {
+      setOrderForm(p => ({
+        ...p,
         gpsX: pinPickerCoords.lat,
         gpsY: pinPickerCoords.lng
       }));
@@ -1330,24 +1337,53 @@ export default function DispatcherScreen({ onBackToWorker, onSelectOrder }) {
               />
             </View>
 
-            {/* Donji box sa pronađenom ulicom/brojem i pitanjem za potvrdu lokacije */}
+            {/* Donji box sa ponuđenim adresama sa te lokacije za izbor */}
             <View style={styles.pinPickerPromptCard}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
-                <MapPin size={16} color="#EA580C" style={{ marginRight: 6 }} />
-                <Text style={styles.pinPickerPromptHeading}>Da li je ovo tačna lokacija klijenta?</Text>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                  <MapPin size={16} color="#EA580C" style={{ marginRight: 6 }} />
+                  <Text style={styles.pinPickerPromptHeading}>Izaberite adresu sa ove lokacije:</Text>
+                </View>
+                {isSearchingNearby && <ActivityIndicator size="small" color="#0284C7" />}
               </View>
 
-              <View style={styles.pinPickerDetectedRow}>
-                <Text style={styles.pinPickerDetectedLabel}>Pronađena ulica i broj:</Text>
-                <Text style={styles.pinPickerDetectedValue}>
-                  {pinPickerResult?.street || (pinPickerMoving ? 'Određivanje ulice i broja...' : 'Pomerite čiodu do željene zgrade')}
-                </Text>
-              </View>
+              <Text style={styles.pinPickerPromptSub}>
+                Kliknite na željenu adresu i kućni broj sa spiska ispod da se upiše u radni nalog:
+              </Text>
 
-              <View style={styles.pinPickerDetectedRow}>
-                <Text style={styles.pinPickerDetectedLabel}>Grad / Mesto:</Text>
-                <Text style={styles.pinPickerDetectedValue}>{pinPickerResult?.city || 'Smederevo'}</Text>
-              </View>
+              {/* Lista pronađenih adresa oko čiode */}
+              <ScrollView style={{ maxHeight: 150, marginTop: 6 }}>
+                {nearbyCandidates.length === 0 && !isSearchingNearby ? (
+                  <Text style={{ fontSize: 12, color: '#64748B', paddingVertical: 8 }}>
+                    Pomerite čiodu na mapi do željene ulice i zgrade.
+                  </Text>
+                ) : (
+                  nearbyCandidates.map((cand, idx) => {
+                    const isSel = selectedCandidate?.id === cand.id || (!selectedCandidate && idx === 0);
+                    return (
+                      <TouchableOpacity
+                        key={cand.id || idx}
+                        style={[styles.candidateRow, isSel && styles.candidateRowActive]}
+                        onPress={() => setSelectedCandidate(cand)}
+                        activeOpacity={0.7}
+                      >
+                        <View style={[styles.candRadio, isSel && styles.candRadioActive]}>
+                          {isSel && <View style={styles.candRadioDot} />}
+                        </View>
+                        <View style={{ flex: 1, marginLeft: 8 }}>
+                          <Text style={[styles.candStreetText, isSel && styles.candStreetTextActive]}>
+                            {cand.street}
+                          </Text>
+                          <Text style={styles.candCityText}>
+                            {cand.city} {cand.isExact ? '• (Tačna lokacija pod čiodom)' : ''}
+                          </Text>
+                        </View>
+                        {isSel && <Check size={16} color="#0284C7" />}
+                      </TouchableOpacity>
+                    );
+                  })
+                )}
+              </ScrollView>
 
               <View style={styles.pinPickerBtnRow}>
                 <TouchableOpacity
@@ -1361,13 +1397,16 @@ export default function DispatcherScreen({ onBackToWorker, onSelectOrder }) {
                 <TouchableOpacity
                   style={[
                     styles.pinPickerConfirmBtn,
-                    (!pinPickerResult?.street && !orderForm.adresa) && { opacity: 0.6 }
+                    (!selectedCandidate && nearbyCandidates.length === 0) && { opacity: 0.6 }
                   ]}
-                  onPress={handleConfirmPinLocation}
+                  onPress={handleConfirmSelectedCandidate}
+                  disabled={!selectedCandidate && nearbyCandidates.length === 0}
                   activeOpacity={0.8}
                 >
                   <Check size={16} color="#FFFFFF" style={{ marginRight: 6 }} />
-                  <Text style={styles.pinPickerConfirmBtnText}>Potvrdi ovu adresu</Text>
+                  <Text style={styles.pinPickerConfirmBtnText}>
+                    {selectedCandidate ? `Upis u nalog: ${selectedCandidate.street}` : 'Postavi odabranu adresu'}
+                  </Text>
                 </TouchableOpacity>
               </View>
             </View>
@@ -2332,6 +2371,57 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '800',
     color: '#C2410C'
+  },
+  pinPickerPromptSub: {
+    fontSize: 11,
+    color: '#9A3412',
+    marginTop: 2,
+    marginBottom: 4
+  },
+  candidateRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 8,
+    borderRadius: 8,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#FED7AA',
+    marginBottom: 5
+  },
+  candidateRowActive: {
+    backgroundColor: '#F0F9FF',
+    borderColor: '#0284C7'
+  },
+  candRadio: {
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    borderWidth: 1.5,
+    borderColor: '#94A3B8',
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  candRadioActive: {
+    borderColor: '#0284C7'
+  },
+  candRadioDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#0284C7'
+  },
+  candStreetText: {
+    fontSize: 12.5,
+    fontWeight: '700',
+    color: '#0F172A'
+  },
+  candStreetTextActive: {
+    color: '#0369A1'
+  },
+  candCityText: {
+    fontSize: 10.5,
+    color: '#64748B',
+    marginTop: 1
   },
   pinPickerDetectedRow: {
     flexDirection: 'row',

@@ -24,6 +24,7 @@ const getMapHtml = (data) => `
     var routeLine = null;
     var geofenceCircle = null;
     var connectLine = null;
+    var pinPickerInit = false;
 
     map.on('moveend', function() {
       var center = map.getCenter();
@@ -43,10 +44,15 @@ const getMapHtml = (data) => `
 
       // 1. PIN PICKER MODE
       if (payload.isPinPickerMode) {
-        if (payload.clientLocation && payload.clientLocation.lat) {
-          map.setView([payload.clientLocation.lat, payload.clientLocation.lng], 16);
+        if (!pinPickerInit) {
+          if (payload.clientLocation && payload.clientLocation.lat) {
+            map.setView([payload.clientLocation.lat, payload.clientLocation.lng], 16);
+            pinPickerInit = true;
+          }
         }
         return;
+      } else {
+        pinPickerInit = false;
       }
 
       // 2. FOCUSED ORDER MODE
