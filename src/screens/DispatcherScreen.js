@@ -235,6 +235,9 @@ export default function DispatcherScreen({ onBackToWorker, onSelectOrder }) {
   const [workers, setWorkers] = useState([]);
   const [orders, setOrders] = useState([]);
 
+  // Odabrani majstor za prikaz njegove lokacije i svih njegovih dolazaka na mapi
+  const [selectedWorkerId, setSelectedWorkerId] = useState(null);
+
   // Fokusirani nalog za prikaz rute i dolazne lokacije na mapi
   const [focusedOrder, setFocusedOrder] = useState(null);
 
@@ -811,6 +814,71 @@ export default function DispatcherScreen({ onBackToWorker, onSelectOrder }) {
                 </View>
               </View>
 
+              {/* Traka za selekciju majstora na mapi */}
+              <View style={styles.workerFilterBar}>
+                <Text style={styles.workerFilterLabel}>Odabir majstora:</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6, alignItems: 'center' }}>
+                  <TouchableOpacity
+                    style={[styles.workerChip, !selectedWorkerId && styles.workerChipActive]}
+                    onPress={() => setSelectedWorkerId(null)}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={[styles.workerChipText, !selectedWorkerId && styles.workerChipTextActive]}>
+                      Svi majstori ({workers.length})
+                    </Text>
+                  </TouchableOpacity>
+
+                  {workers.map(w => {
+                    const wOrderCount = orders.filter(o => Number(o.majstor_id) === Number(w.id)).length;
+                    const isSelected = Number(selectedWorkerId) === Number(w.id);
+                    return (
+                      <TouchableOpacity
+                        key={w.id}
+                        style={[
+                          styles.workerChip,
+                          isSelected && styles.workerChipActive,
+                          isSelected && { borderColor: w.boja_markera || '#059669' }
+                        ]}
+                        onPress={() => setSelectedWorkerId(isSelected ? null : w.id)}
+                        activeOpacity={0.8}
+                      >
+                        <View style={[styles.workerChipDot, { backgroundColor: w.boja_markera || '#059669' }]} />
+                        <Text style={[styles.workerChipText, isSelected && styles.workerChipTextActive]}>
+                          {w.ime} {w.prezime || ''} ({wOrderCount})
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </ScrollView>
+              </View>
+
+              {/* Baner kada je odabran konkretan majstor */}
+              {selectedWorkerId && (
+                <View style={styles.selectedWorkerBanner}>
+                  <View style={{ flex: 1, paddingRight: 8 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                      <Truck size={15} color="#059669" />
+                      <Text style={styles.selectedWorkerBannerTitle}>
+                        Prikaz terena za: <Text style={{ color: '#0F172A', fontWeight: '900' }}>
+                          {workers.find(w => Number(w.id) === Number(selectedWorkerId))?.ime} {workers.find(w => Number(w.id) === Number(selectedWorkerId))?.prezime || ''}
+                        </Text>
+                      </Text>
+                    </View>
+                    <Text style={styles.selectedWorkerBannerSub}>
+                      📍 Prikazane sve dolazne lokacije klijenata za odabrani dan ({orders.filter(o => Number(o.majstor_id) === Number(selectedWorkerId)).length} naloga) i trenutna lokacija majstora
+                    </Text>
+                  </View>
+                  <TouchableOpacity
+                    style={styles.selectedWorkerClearBtn}
+                    onPress={() => setSelectedWorkerId(null)}
+                    activeOpacity={0.7}
+                  >
+                    <X size={14} color="#DC2626" style={{ marginRight: 4 }} />
+                    <Text style={styles.selectedWorkerClearBtnText}>Svi majstori</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+
               {focusedOrder && (
                 <View style={styles.mapFocusBanner}>
                   <View style={{ flex: 1, paddingRight: 8 }}>
@@ -839,9 +907,12 @@ export default function DispatcherScreen({ onBackToWorker, onSelectOrder }) {
                 isDispatcher={true}
                 workers={workers}
                 orders={orders}
+                selectedWorkerId={selectedWorkerId}
+                onSelectWorker={(wId) => setSelectedWorkerId(wId)}
                 focusedOrder={focusedOrder}
                 workerLocation={myLocation}
-                height={isDesktop ? (focusedOrder ? 515 : 570) : 280}
+                onSelectOrder={onSelectOrder}
+                height={isDesktop ? (focusedOrder || selectedWorkerId ? 490 : 540) : 280}
               />
             </View>
           </View>
@@ -921,9 +992,28 @@ export default function DispatcherScreen({ onBackToWorker, onSelectOrder }) {
                           >
                             <MapPin size={12} color={isFocused ? '#FFFFFF' : '#0284C7'} style={{ marginRight: 4 }} />
                             <Text style={[styles.showOnMapBtnText, isFocused && { color: '#FFFFFF' }]}>
-                              {isFocused ? 'Ukloni sa mape' : 'Prikaži na mapi'}
+                              {isFocused ? 'Ukloni sa mape' : 'Prikaži nalog'}
                             </Text>
                           </TouchableOpacity>
+
+                          {fo.majstor_id ? (
+                            <TouchableOpacity
+                              style={[
+                                styles.showAllWorkerOrdersBtn,
+                                Number(selectedWorkerId) === Number(fo.majstor_id) && styles.showAllWorkerOrdersBtnActive
+                              ]}
+                              onPress={(e) => {
+                                e?.stopPropagation?.();
+                                setSelectedWorkerId(prev => Number(prev) === Number(fo.majstor_id) ? null : fo.majstor_id);
+                              }}
+                              activeOpacity={0.7}
+                            >
+                              <Truck size={12} color={Number(selectedWorkerId) === Number(fo.majstor_id) ? '#FFFFFF' : '#059669'} style={{ marginRight: 4 }} />
+                              <Text style={[styles.showAllWorkerOrdersBtnText, Number(selectedWorkerId) === Number(fo.majstor_id) && { color: '#FFFFFF' }]}>
+                                {Number(selectedWorkerId) === Number(fo.majstor_id) ? 'Svi majstori' : 'Sve lokacije majstora'}
+                              </Text>
+                            </TouchableOpacity>
+                          ) : null}
 
                           {onSelectOrder && (
                             <TouchableOpacity
@@ -3121,5 +3211,102 @@ const styles = StyleSheet.create({
     fontSize: 12.5,
     fontWeight: '800',
     color: '#FFFFFF'
+  },
+  workerFilterBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F8FAFC',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E2E8F0',
+    gap: 8
+  },
+  workerFilterLabel: {
+    fontSize: 11.5,
+    fontWeight: '700',
+    color: '#64748B'
+  },
+  workerChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 20
+  },
+  workerChipActive: {
+    backgroundColor: '#0F172A',
+    borderColor: '#0F172A'
+  },
+  workerChipText: {
+    fontSize: 11.5,
+    fontWeight: '700',
+    color: '#334155'
+  },
+  workerChipTextActive: {
+    color: '#FFFFFF'
+  },
+  workerChipDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    marginRight: 5
+  },
+  selectedWorkerBanner: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: '#ECFDF5',
+    borderBottomWidth: 1,
+    borderBottomColor: '#A7F3D0',
+    paddingHorizontal: 12,
+    paddingVertical: 8
+  },
+  selectedWorkerBannerTitle: {
+    fontSize: 12.5,
+    fontWeight: '700',
+    color: '#065F46'
+  },
+  selectedWorkerBannerSub: {
+    fontSize: 11,
+    color: '#047857',
+    marginTop: 2
+  },
+  selectedWorkerClearBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#FECACA',
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+    borderRadius: 6
+  },
+  selectedWorkerClearBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#DC2626'
+  },
+  showAllWorkerOrdersBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#ECFDF5',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    borderRadius: 6
+  },
+  showAllWorkerOrdersBtnActive: {
+    backgroundColor: '#059669',
+    borderColor: '#059669'
+  },
+  showAllWorkerOrdersBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#059669'
   }
 });

@@ -37,6 +37,14 @@ const getMapHtml = () => `
       }
     };
 
+    window.parentSelectWorker = function(workerId) {
+      if (window.ReactNativeWebView) {
+        window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'SELECT_WORKER', workerId: workerId }));
+      } else if (window.parent) {
+        window.parent.postMessage(JSON.stringify({ type: 'SELECT_WORKER', workerId: workerId }), '*');
+      }
+    };
+
     map.on('moveend', function() {
       var center = map.getCenter();
       if (window.ReactNativeWebView) {
@@ -321,30 +329,179 @@ const getMapHtml = () => `
           }
         }
       } else {
-        // Dispečerski pregled terena (Prikaz samo aktivnih majstora i pozicije ulogovanog korisnika)
-        (payload.workers || []).forEach(function(w) {
-          var isFree = !w.radni_status || w.radni_status === 'SLOBODAN' || w.radni_status === 'NEAKTIVAN';
-          if (w.gpsX && w.gpsY && !isFree) {
-            var pos = [parseFloat(w.gpsX), parseFloat(w.gpsY)];
-            bounds.push(pos);
-            var icon = L.divIcon({
-              html: '<div style="background:' + (w.boja_markera || '#059669') + ';color:white;padding:3px 8px;border-radius:12px;border:2px solid white;box-shadow:0 2px 6px rgba(0,0,0,0.3);font-size:11px;font-weight:700;white-space:nowrap;">🚗 ' + w.ime + '</div>',
-              iconSize: [80, 26],
-              iconAnchor: [40, 13]
-            });
-            markers['w_' + w.id] = L.marker(pos, { icon: icon }).addTo(map);
-          }
-        });
+        // Dispečerski pregled terena
+        // -------------------------------------------------------------
+        // A) AKO JE ODABRAN ODREĐENI MAJSTOR: Prikaz lokacije majstora i SVIH njegovih dolaznih lokacija za taj dan
+        // -------------------------------------------------------------
+        if (payload.selectedWorkerId || payload.selectedWorker) {
+          var selId = payload.selectedWorkerId ? Number(payload.selectedWorkerId) : (payload.selectedWorker ? Number(payload.selectedWorker.id) : 0);
+          var selWorker = payload.selectedWorker || (payload.workers || []).find(function(w) { return Number(w.id) === selId; });
 
-        if (payload.workerLocation && payload.workerLocation.lat) {
-          var uPos = [parseFloat(payload.workerLocation.lat), parseFloat(payload.workerLocation.lng)];
-          bounds.push(uPos);
-          var uIcon = L.divIcon({
-            html: '<div style="background:#0284C7;color:white;width:34px;height:34px;border-radius:50%;border:2.5px solid white;display:flex;align-items:center;justify-content:center;box-shadow:0 3px 8px rgba(0,0,0,0.4);font-size:16px;">🏢</div>',
-            iconSize: [34, 34],
-            iconAnchor: [17, 17]
+          var workerPos = null;
+          if (selWorker && selWorker.gpsX && selWorker.gpsY) {
+            workerPos = [parseFloat(selWorker.gpsX), parseFloat(selWorker.gpsY)];
+            bounds.push(workerPos);
+
+            var wColor = selWorker.boja_markera || '#059669';
+            var wIconHtml = '<div style="background:' + wColor + ';color:white;padding:5px 12px;border-radius:18px;border:2.5px solid white;box-shadow:0 4px 14px rgba(0,0,0,0.35);font-size:12px;font-weight:800;white-space:nowrap;display:flex;align-items:center;gap:4px;">'
+              + '<span>🚗</span><span>' + selWorker.ime + (selWorker.prezime ? ' ' + selWorker.prezime : '') + '</span>'
+              + '</div>';
+
+            var wm = L.marker(workerPos, {
+              icon: L.divIcon({ html: wIconHtml, iconSize: [140, 30], iconAnchor: [70, 15] })
+            }).addTo(map);
+
+            wm.bindPopup('<b>🚗 Majstor: ' + selWorker.ime + ' ' + (selWorker.prezime || '') + '</b><br>📞 ' + (selWorker.telefon || '-') + '<br>Status: ' + (selWorker.radni_status || 'Aktivan'));
+            markers['selected_worker'] = wm;
+          }
+
+          // Nalozi odabranog majstora za odabrani datum
+          var workerOrders = (payload.orders || []).filter(function(o) {
+            return Number(o.majstor_id) === selId;
           });
-          markers['dispatcher_me'] = L.marker(uPos, { icon: uIcon }).addTo(map);
+
+          var activeOrderToRoute = null;
+
+          workerOrders.forEach(function(o, idx) {
+            var oLat = parseFloat(o.gpsX);
+            var oLng = parseFloat(o.gpsY);
+            if (!oLat || !oLng) return;
+
+            var oPos = [oLat, oLng];
+            bounds.push(oPos);
+
+            var isFocused = payload.focusedOrder && Number(payload.focusedOrder.id) === Number(o.id);
+            var status = o.status || 'DODELJENO';
+            var isUrgent = o.prioritet === 'HITNO';
+
+            var pinColor = '#0284C7';
+            var statusText = 'Dodeljeno (čeka)';
+            var statusBg = '#E0F2FE';
+            var statusBorder = '#BAE6FD';
+
+            if (status === 'U_RADU') {
+              pinColor = '#D97706';
+              statusText = 'U radu na lokaciji';
+              statusBg = '#FEF3C7';
+              statusBorder = '#FDE68A';
+              if (!activeOrderToRoute) activeOrderToRoute = o;
+            } else if (status === 'NA_PUTU') {
+              pinColor = '#4F46E5';
+              statusText = 'Na putu ka adresi';
+              statusBg = '#EEF2FF';
+              statusBorder = '#C7D2FE';
+              activeOrderToRoute = o;
+            } else if (status === 'PRIHVACENO') {
+              pinColor = '#0284C7';
+              statusText = 'Prihvaćeno (spremno)';
+              statusBg = '#E0F2FE';
+              statusBorder = '#BAE6FD';
+            } else if (status === 'ZAVRSENO') {
+              var inGeo = (Number(o.start_u_opsegu) === 1);
+              pinColor = inGeo ? '#059669' : '#DC2626';
+              statusText = inGeo ? 'Završeno i overeno' : 'Završeno (van opsega)';
+              statusBg = inGeo ? '#DEF7EC' : '#FEE2E2';
+              statusBorder = inGeo ? '#BCF0DA' : '#FECACA';
+            } else if (status === 'ODLOZENO') {
+              pinColor = '#DC2626';
+              statusText = 'Odloženo';
+              statusBg = '#FEE2E2';
+              statusBorder = '#FECACA';
+            }
+
+            var orderNumClean = (o.broj_naloga || '').replace(/^[A-Za-z]+-[0-9]+-/, '');
+            var badgeLabel = orderNumClean ? ('#' + orderNumClean) : (idx + 1);
+
+            var pinHtml = '<div style="position:relative;display:flex;align-items:center;justify-content:center;">'
+              + '<div style="background:' + pinColor + ';color:white;width:34px;height:34px;border-radius:50% 50% 50% 0;transform:rotate(-45deg);border:2.5px solid white;display:flex;align-items:center;justify-content:center;box-shadow:0 3px 10px rgba(0,0,0,0.35);' + (isFocused ? 'box-shadow:0 0 0 3px #F59E0B, 0 4px 14px rgba(0,0,0,0.5);' : '') + '">'
+              + '<span style="transform:rotate(45deg);font-size:11px;font-weight:900;">' + badgeLabel + '</span>'
+              + '</div>'
+              + (isUrgent ? '<div style="position:absolute;top:-5px;right:-5px;background:#DC2626;color:white;width:15px;height:15px;border-radius:50%;font-size:9px;font-weight:900;display:flex;align-items:center;justify-content:center;border:1.5px solid white;">!</div>' : '')
+              + '</div>';
+
+            var mIcon = L.divIcon({
+              html: pinHtml,
+              iconSize: [34, 34],
+              iconAnchor: [17, 34],
+              popupAnchor: [0, -32]
+            });
+
+            var marker = L.marker(oPos, { icon: mIcon }).addTo(map);
+
+            var popupHtml = '<div style="font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',Roboto,sans-serif;min-width:210px;padding:2px;">'
+              + '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">'
+              + '<b style="color:#0284C7;font-size:12px;">' + (o.broj_naloga || ('Nalog #' + o.id)) + '</b>'
+              + (isUrgent ? '<span style="background:#FEE2E2;color:#DC2626;font-size:10px;font-weight:800;padding:1px 5px;border-radius:4px;">⚡ HITNO</span>' : '')
+              + '</div>'
+              + '<div style="font-size:13px;font-weight:800;color:#0F172A;margin-bottom:2px;">' + (o.klijent_ime || 'Klijent') + '</div>'
+              + '<div style="font-size:11.5px;color:#475569;margin-bottom:4px;">📍 ' + (o.adresa || '') + (o.sprat_stan ? ' (' + o.sprat_stan + ')' : '') + '</div>'
+              + '<div style="margin-bottom:6px;"><span style="display:inline-block;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:700;background:' + statusBg + ';color:' + pinColor + ';border:1px solid ' + statusBorder + ';">' + statusText + '</span></div>'
+              + (o.opis_kvara ? '<div style="font-size:10.5px;color:#334155;background:#F8FAFC;padding:5px 7px;border-radius:6px;margin-bottom:6px;border:1px solid #E2E8F0;"><b>Kvar:</b> ' + o.opis_kvara + '</div>' : '')
+              + '<button onclick="window.parentSelectOrder(' + o.id + ')" style="width:100%;padding:7px 0;background:#0284C7;color:white;border:none;border-radius:6px;font-size:11.5px;font-weight:800;cursor:pointer;">Otvori radni nalog ↗</button>'
+              + '</div>';
+
+            marker.bindPopup(popupHtml);
+            markers['order_' + o.id] = marker;
+
+            if (isFocused) {
+              marker.openPopup();
+              activeOrderToRoute = o;
+            }
+          });
+
+          // Iscrtavanje rute od lokacije majstora do aktivnog ili fokusiranog naloga
+          var targetOrder = payload.focusedOrder || activeOrderToRoute;
+          if (workerPos && targetOrder && targetOrder.gpsX && targetOrder.gpsY) {
+            var destPos = [parseFloat(targetOrder.gpsX), parseFloat(targetOrder.gpsY)];
+            var osrmUrl = 'https://router.project-osrm.org/route/v1/driving/' + workerPos[1] + ',' + workerPos[0] + ';' + destPos[1] + ',' + destPos[0] + '?overview=full&geometries=geojson';
+            fetch(osrmUrl).then(function(res){ return res.json(); }).then(function(d){
+              if (d.routes && d.routes.length > 0) {
+                var coords = d.routes[0].geometry.coordinates.map(function(pt) { return [pt[1], pt[0]]; });
+                if (routeLine) map.removeLayer(routeLine);
+                routeLine = L.polyline(coords, { color: '#0284C7', weight: 5, opacity: 0.9 }).addTo(map);
+              }
+            }).catch(function(){});
+          }
+        } else {
+          // -------------------------------------------------------------
+          // B) GLOBALNI PREGLED SVIH MAJSTORA NA TERENU
+          // -------------------------------------------------------------
+          (payload.workers || []).forEach(function(w) {
+            var isFree = !w.radni_status || w.radni_status === 'SLOBODAN' || w.radni_status === 'NEAKTIVAN';
+            if (w.gpsX && w.gpsY && !isFree) {
+              var pos = [parseFloat(w.gpsX), parseFloat(w.gpsY)];
+              bounds.push(pos);
+
+              var wOrderCount = (payload.orders || []).filter(function(o) { return Number(o.majstor_id) === Number(w.id); }).length;
+
+              var icon = L.divIcon({
+                html: '<div style="background:' + (w.boja_markera || '#059669') + ';color:white;padding:3px 8px;border-radius:12px;border:2px solid white;box-shadow:0 2px 6px rgba(0,0,0,0.3);font-size:11px;font-weight:700;white-space:nowrap;cursor:pointer;">🚗 ' + w.ime + (wOrderCount > 0 ? ' (' + wOrderCount + ')' : '') + '</div>',
+                iconSize: [95, 26],
+                iconAnchor: [47, 13]
+              });
+
+              var wm = L.marker(pos, { icon: icon }).addTo(map);
+              var wPopup = '<div style="font-family:sans-serif;padding:3px;min-width:180px;">'
+                + '<b>🚗 Majstor: ' + w.ime + (w.prezime ? ' ' + w.prezime : '') + '</b><br>'
+                + '📞 ' + (w.telefon || '-') + '<br>'
+                + 'Naloga danas: <b>' + wOrderCount + '</b><br>'
+                + '<button onclick="window.parentSelectWorker(' + w.id + ')" style="margin-top:6px;width:100%;padding:6px 0;background:#0284C7;color:white;border:none;border-radius:6px;font-size:11px;font-weight:700;cursor:pointer;">Prikaži sve dolazne lokacije ↗</button>'
+                + '</div>';
+              wm.bindPopup(wPopup);
+              markers['w_' + w.id] = wm;
+            }
+          });
+
+          if (payload.workerLocation && payload.workerLocation.lat) {
+            var uPos = [parseFloat(payload.workerLocation.lat), parseFloat(payload.workerLocation.lng)];
+            bounds.push(uPos);
+            var uIcon = L.divIcon({
+              html: '<div style="background:#0284C7;color:white;width:34px;height:34px;border-radius:50%;border:2.5px solid white;display:flex;align-items:center;justify-content:center;box-shadow:0 3px 8px rgba(0,0,0,0.4);font-size:16px;">🏢</div>',
+              iconSize: [34, 34],
+              iconAnchor: [17, 17]
+            });
+            markers['dispatcher_me'] = L.marker(uPos, { icon: uIcon }).addTo(map);
+          }
         }
       }
 
@@ -382,10 +539,13 @@ export default function MapComponent({
   orders = [],
   workers = [],
   isDispatcher = false,
+  selectedWorkerId = null,
+  selectedWorker = null,
   focusedOrder = null,
   isPinPickerMode = false,
   onPinCoordsChange = null,
   onSelectOrder = null,
+  onSelectWorker = null,
   height = 320
 }) {
   const webViewRef = useRef(null);
@@ -399,6 +559,8 @@ export default function MapComponent({
       orders,
       workers,
       isDispatcher,
+      selectedWorkerId,
+      selectedWorker,
       focusedOrder,
       isPinPickerMode
     };
@@ -411,7 +573,7 @@ export default function MapComponent({
 
   useEffect(() => {
     sendPayload();
-  }, [clientLocation, workerLocation, startLocation, orders, workers, isDispatcher, focusedOrder, isPinPickerMode]);
+  }, [clientLocation, workerLocation, startLocation, orders, workers, isDispatcher, selectedWorkerId, selectedWorker, focusedOrder, isPinPickerMode]);
 
   // Web event listener za primanje poruka od iframe-a
   useEffect(() => {
@@ -425,6 +587,8 @@ export default function MapComponent({
             }
           } else if (data?.type === 'SELECT_ORDER' && onSelectOrder) {
             onSelectOrder(data.orderId);
+          } else if (data?.type === 'SELECT_WORKER' && onSelectWorker) {
+            onSelectWorker(data.workerId);
           } else if (data?.type === 'PIN_MOVE_END' && onPinCoordsChange) {
             onPinCoordsChange({ lat: data.lat, lng: data.lng, isMoving: false });
           }
@@ -433,7 +597,7 @@ export default function MapComponent({
       window.addEventListener('message', handleWebMsg);
       return () => window.removeEventListener('message', handleWebMsg);
     }
-  }, [onSelectOrder, onPinCoordsChange]);
+  }, [onSelectOrder, onSelectWorker, onPinCoordsChange]);
 
   return (
     <View style={[styles.container, { height }]}>
@@ -454,6 +618,8 @@ export default function MapComponent({
               onPinCoordsChange({ lat: data.lat, lng: data.lng, isMoving: false });
             } else if (data.type === 'SELECT_ORDER' && onSelectOrder) {
               onSelectOrder(data.orderId);
+            } else if (data.type === 'SELECT_WORKER' && onSelectWorker) {
+              onSelectWorker(data.workerId);
             }
           } catch (e) {}
         }}
