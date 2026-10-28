@@ -40,7 +40,12 @@ import {
   UserX,
   CalendarDays,
   ChevronDown,
-  Trash2
+  Trash2,
+  Package,
+  Search,
+  Boxes,
+  Tag,
+  Edit3
 } from 'lucide-react-native';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../services/api';
@@ -254,6 +259,24 @@ export default function DispatcherScreen({ onBackToWorker, onSelectOrder }) {
   const [isSearchingNearby, setIsSearchingNearby] = useState(false);
   const pinPickerReqIdRef = useRef(0);
   const pinPickerDebounceRef = useRef(null);
+
+  // Upravljanje katalogom delova i usluga iz dispečerskog centra
+  const [showCatalogModal, setShowCatalogModal] = useState(false);
+  const [catalogItems, setCatalogItems] = useState([]);
+  const [loadingCatalog, setLoadingCatalog] = useState(false);
+  const [catalogSearch, setCatalogSearch] = useState('');
+  const [catalogType, setCatalogType] = useState('ALL');
+  const [catalogFormMode, setCatalogFormMode] = useState(false);
+  const [editingCatalogItem, setEditingCatalogItem] = useState(null);
+  const [catalogForm, setCatalogForm] = useState({
+    naziv: '',
+    tip: 'DEO',
+    jedinica_mere: 'kom',
+    cena: '',
+    sifra: '',
+    kolicina_na_stanju: '100'
+  });
+  const [savingCatalog, setSavingCatalog] = useState(false);
 
   // Pokušaj preuzimanja tačne GPS lokacije ulogovanog korisnika preko pregledača
   useEffect(() => {
@@ -515,6 +538,107 @@ export default function DispatcherScreen({ onBackToWorker, onSelectOrder }) {
     }
   };
 
+  const loadDispatcherCatalog = async (q = catalogSearch, tip = catalogType) => {
+    try {
+      setLoadingCatalog(true);
+      const res = await api.getCatalog(firmId, q, tip === 'ALL' ? '' : tip);
+      setCatalogItems(res || []);
+    } catch (e) {
+      console.warn('Greška kataloga:', e);
+    } finally {
+      setLoadingCatalog(false);
+    }
+  };
+
+  const handleOpenCatalogManager = () => {
+    setCatalogFormMode(false);
+    setEditingCatalogItem(null);
+    setCatalogSearch('');
+    setCatalogType('ALL');
+    loadDispatcherCatalog('', 'ALL');
+    setShowCatalogModal(true);
+  };
+
+  const handleOpenNewCatalogItem = () => {
+    setEditingCatalogItem(null);
+    setCatalogForm({
+      naziv: '',
+      tip: 'DEO',
+      jedinica_mere: 'kom',
+      cena: '',
+      sifra: '',
+      kolicina_na_stanju: '100'
+    });
+    setCatalogFormMode(true);
+  };
+
+  const handleEditCatalogItem = (item) => {
+    setEditingCatalogItem(item);
+    setCatalogForm({
+      naziv: item.naziv,
+      tip: item.tip || 'DEO',
+      jedinica_mere: item.jedinica_mere || 'kom',
+      cena: String(item.cena || ''),
+      sifra: item.sifra || '',
+      kolicina_na_stanju: String(item.kolicina_na_stanju || '100')
+    });
+    setCatalogFormMode(true);
+  };
+
+  const handleSaveCatalogItem = async () => {
+    if (!catalogForm.naziv.trim()) {
+      const msg = 'Naziv artikla / usluge je obavezan.';
+      if (Platform.OS === 'web') window.alert(msg);
+      else Alert.alert('Obavezno polje', msg);
+      return;
+    }
+
+    try {
+      setSavingCatalog(true);
+      await api.saveCatalogItem({
+        id: editingCatalogItem ? editingCatalogItem.id : 0,
+        firma_id: firmId,
+        naziv: catalogForm.naziv.trim(),
+        tip: catalogForm.tip,
+        jedinica_mere: catalogForm.jedinica_mere.trim() || 'kom',
+        cena: parseFloat(catalogForm.cena) || 0,
+        sifra: catalogForm.sifra.trim(),
+        kolicina_na_stanju: parseFloat(catalogForm.kolicina_na_stanju) || 100
+      });
+
+      setCatalogFormMode(false);
+      setEditingCatalogItem(null);
+      await loadDispatcherCatalog(catalogSearch, catalogType);
+    } catch (e) {
+      const msg = e.message || 'Greška pri čuvanju artikla.';
+      if (Platform.OS === 'web') window.alert(msg);
+      else Alert.alert('Greška', msg);
+    } finally {
+      setSavingCatalog(false);
+    }
+  };
+
+  const handleDeleteCatalogItem = async (item) => {
+    const doDelete = async () => {
+      try {
+        await api.deleteCatalogItem(item.id, firmId);
+        await loadDispatcherCatalog(catalogSearch, catalogType);
+      } catch (e) {
+        console.warn('Greška brisanja:', e);
+      }
+    };
+
+    const confirmMsg = `Da li želite da uklonite "${item.naziv}" iz šifarnika?`;
+    if (Platform.OS === 'web') {
+      if (window.confirm(confirmMsg)) doDelete();
+    } else {
+      Alert.alert('Potvrda brisanja', confirmMsg, [
+        { text: 'Odustani', style: 'cancel' },
+        { text: 'Obriši', style: 'destructive', onPress: doDelete }
+      ]);
+    }
+  };
+
   const handleSaveOrder = async () => {
     if (!orderForm.klijent_ime.trim()) {
       setOrderError('Ime i prezime klijenta je obavezno polje.');
@@ -623,14 +747,25 @@ export default function DispatcherScreen({ onBackToWorker, onSelectOrder }) {
 
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
           {(isAdmin || isOwner || isSuperAdmin) && (
-            <TouchableOpacity
-              style={styles.headerCreateBtn}
-              onPress={handleOpenCreateOrder}
-              activeOpacity={0.8}
-            >
-              <Plus size={15} color="#FFFFFF" style={{ marginRight: 5 }} />
-              <Text style={styles.headerCreateBtnText}>Novi nalog</Text>
-            </TouchableOpacity>
+            <>
+              <TouchableOpacity
+                style={styles.headerCatalogBtn}
+                onPress={handleOpenCatalogManager}
+                activeOpacity={0.8}
+              >
+                <Package size={15} color="#0284C7" style={{ marginRight: 5 }} />
+                <Text style={styles.headerCatalogBtnText}>Katalog delova</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.headerCreateBtn}
+                onPress={handleOpenCreateOrder}
+                activeOpacity={0.8}
+              >
+                <Plus size={15} color="#FFFFFF" style={{ marginRight: 5 }} />
+                <Text style={styles.headerCreateBtnText}>Novi nalog</Text>
+              </TouchableOpacity>
+            </>
           )}
 
           <TouchableOpacity style={styles.iconBtn} onPress={() => loadDashboard(selectedDate)} activeOpacity={0.8}>
@@ -1443,6 +1578,277 @@ export default function DispatcherScreen({ onBackToWorker, onSelectOrder }) {
                 </TouchableOpacity>
               </View>
             </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Upravljanje katalogom delova i usluga */}
+      <Modal
+        visible={showCatalogModal}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => {
+          if (catalogFormMode) setCatalogFormMode(false);
+          else setShowCatalogModal(false);
+        }}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={[styles.modalCard, { maxWidth: 650, maxHeight: '90%' }]}>
+            <View style={styles.modalHeader}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <Package size={20} color="#0284C7" />
+                <Text style={styles.modalTitle}>
+                  {catalogFormMode 
+                    ? (editingCatalogItem ? 'Izmena artikla' : 'Novi artikal u katalogu')
+                    : 'Katalog delova, materijala i usluga'}
+                </Text>
+              </View>
+              <TouchableOpacity
+                style={styles.modalCloseBtn}
+                onPress={() => {
+                  if (catalogFormMode) setCatalogFormMode(false);
+                  else setShowCatalogModal(false);
+                }}
+              >
+                <X size={18} color="#64748B" />
+              </TouchableOpacity>
+            </View>
+
+            {catalogFormMode ? (
+              <ScrollView style={{ padding: 16 }} contentContainerStyle={{ paddingBottom: 24 }}>
+                <View style={styles.adminFormBox}>
+                  <Text style={styles.fieldLabel}>Tip artikla</Text>
+                  <View style={{ flexDirection: 'row', gap: 8, marginBottom: 14 }}>
+                    {[
+                      { key: 'DEO', label: 'Deo' },
+                      { key: 'USLUGA', label: 'Usluga' },
+                      { key: 'MATERIJAL', label: 'Materijal' }
+                    ].map(t => (
+                      <TouchableOpacity
+                        key={t.key}
+                        style={[styles.adminTipBtn, catalogForm.tip === t.key && styles.adminTipBtnActive]}
+                        onPress={() => setCatalogForm(prev => ({ ...prev, tip: t.key }))}
+                      >
+                        <Text style={[styles.adminTipBtnText, catalogForm.tip === t.key && styles.adminTipBtnTextActive]}>
+                          {t.label}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+
+                  <Text style={styles.fieldLabel}>Naziv artikla / usluge *</Text>
+                  <TextInput
+                    style={styles.fieldInput}
+                    placeholder="npr. Filter ulja Bosch, Zamena kočnica..."
+                    value={catalogForm.naziv}
+                    onChangeText={v => setCatalogForm(prev => ({ ...prev, naziv: v }))}
+                  />
+
+                  <View style={{ flexDirection: 'row', gap: 10, marginTop: 10 }}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.fieldLabel}>Šifra / Kataloški broj</Text>
+                      <TextInput
+                        style={styles.fieldInput}
+                        placeholder="npr. FLT-01"
+                        value={catalogForm.sifra}
+                        onChangeText={v => setCatalogForm(prev => ({ ...prev, sifra: v }))}
+                      />
+                    </View>
+
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.fieldLabel}>Cena (RSD)</Text>
+                      <TextInput
+                        style={styles.fieldInput}
+                        placeholder="0.00"
+                        keyboardType="numeric"
+                        value={catalogForm.cena}
+                        onChangeText={v => setCatalogForm(prev => ({ ...prev, cena: v }))}
+                      />
+                    </View>
+                  </View>
+
+                  <View style={{ flexDirection: 'row', gap: 10, marginTop: 10 }}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.fieldLabel}>Jedinica mere</Text>
+                      <TextInput
+                        style={styles.fieldInput}
+                        placeholder="kom, m, kg, sat..."
+                        value={catalogForm.jedinica_mere}
+                        onChangeText={v => setCatalogForm(prev => ({ ...prev, jedinica_mere: v }))}
+                      />
+                      <View style={{ flexDirection: 'row', gap: 6, marginTop: 6 }}>
+                        {['kom', 'sat', 'm', 'kg', 'lit'].map(u => (
+                          <TouchableOpacity
+                            key={u}
+                            style={[styles.adminUnitChip, catalogForm.jedinica_mere === u && styles.adminUnitChipActive]}
+                            onPress={() => setCatalogForm(prev => ({ ...prev, jedinica_mere: u }))}
+                          >
+                            <Text style={[styles.adminUnitChipText, catalogForm.jedinica_mere === u && styles.adminUnitChipTextActive]}>
+                              {u}
+                            </Text>
+                          </TouchableOpacity>
+                        ))}
+                      </View>
+                    </View>
+
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.fieldLabel}>Stanje na lageru</Text>
+                      <TextInput
+                        style={styles.fieldInput}
+                        placeholder="100"
+                        keyboardType="numeric"
+                        value={catalogForm.kolicina_na_stanju}
+                        onChangeText={v => setCatalogForm(prev => ({ ...prev, kolicina_na_stanju: v }))}
+                      />
+                    </View>
+                  </View>
+
+                  <View style={styles.adminFormActions}>
+                    <TouchableOpacity
+                      style={styles.adminCancelBtn}
+                      onPress={() => setCatalogFormMode(false)}
+                      disabled={savingCatalog}
+                    >
+                      <Text style={styles.adminCancelBtnText}>Odustani</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={[styles.adminSaveBtn, savingCatalog && { opacity: 0.6 }]}
+                      onPress={handleSaveCatalogItem}
+                      disabled={savingCatalog}
+                    >
+                      {savingCatalog ? (
+                        <ActivityIndicator size="small" color="#FFFFFF" />
+                      ) : (
+                        <>
+                          <Check size={16} color="#FFFFFF" style={{ marginRight: 6 }} />
+                          <Text style={styles.adminSaveBtnText}>Sačuvaj u katalog</Text>
+                        </>
+                      )}
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              </ScrollView>
+            ) : (
+              <View style={{ flex: 1, padding: 16 }}>
+                <View style={{ flexDirection: 'row', gap: 10, marginBottom: 12 }}>
+                  <View style={styles.catSearchBox}>
+                    <Search size={16} color="#64748B" />
+                    <TextInput
+                      style={styles.catSearchInput}
+                      placeholder="Pretraži po nazivu ili šifri..."
+                      value={catalogSearch}
+                      onChangeText={val => {
+                        setCatalogSearch(val);
+                        loadDispatcherCatalog(val, catalogType);
+                      }}
+                    />
+                  </View>
+
+                  <TouchableOpacity
+                    style={styles.addNewItemBtn}
+                    onPress={handleOpenNewCatalogItem}
+                    activeOpacity={0.8}
+                  >
+                    <Plus size={16} color="#FFFFFF" style={{ marginRight: 4 }} />
+                    <Text style={styles.addNewItemBtnText}>Novi artikal</Text>
+                  </TouchableOpacity>
+                </View>
+
+                {/* Filter chipovi */}
+                <View style={{ flexDirection: 'row', gap: 8, marginBottom: 12 }}>
+                  {[
+                    { key: 'ALL', label: 'Sve stavke' },
+                    { key: 'DEO', label: 'Delovi' },
+                    { key: 'USLUGA', label: 'Usluge' },
+                    { key: 'MATERIJAL', label: 'Materijali' }
+                  ].map(tab => (
+                    <TouchableOpacity
+                      key={tab.key}
+                      style={[styles.typeFilterBtn, catalogType === tab.key && styles.typeFilterBtnActive]}
+                      onPress={() => {
+                        setCatalogType(tab.key);
+                        loadDispatcherCatalog(catalogSearch, tab.key);
+                      }}
+                    >
+                      <Text style={[styles.typeFilterBtnText, catalogType === tab.key && styles.typeFilterBtnTextActive]}>
+                        {tab.label}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+
+                {loadingCatalog ? (
+                  <View style={{ padding: 40, alignItems: 'center' }}>
+                    <ActivityIndicator size="large" color="#0284C7" />
+                    <Text style={{ marginTop: 8, color: '#64748B', fontSize: 13 }}>Učitavanje kataloga...</Text>
+                  </View>
+                ) : (
+                  <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: 16 }}>
+                    {catalogItems.length === 0 ? (
+                      <View style={{ padding: 30, alignItems: 'center' }}>
+                        <Boxes size={36} color="#94A3B8" />
+                        <Text style={{ marginTop: 8, color: '#64748B', fontSize: 13, fontWeight: '600' }}>
+                          Nema pronađenih artikala u katalogu.
+                        </Text>
+                      </View>
+                    ) : (
+                      catalogItems.map(item => (
+                        <View key={item.id} style={styles.adminCatRow}>
+                          <View style={{ flex: 1, marginRight: 10 }}>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 3 }}>
+                              <View style={[
+                                styles.adminTypeBadge,
+                                item.tip === 'USLUGA' && { backgroundColor: '#EDE9FE' },
+                                item.tip === 'MATERIJAL' && { backgroundColor: '#FEF3C7' }
+                              ]}>
+                                <Text style={[
+                                  styles.adminTypeBadgeText,
+                                  item.tip === 'USLUGA' && { color: '#6D28D9' },
+                                  item.tip === 'MATERIJAL' && { color: '#B45309' }
+                                ]}>
+                                  {item.tip || 'DEO'}
+                                </Text>
+                              </View>
+                              {item.sifra ? (
+                                <Text style={styles.adminCodeText}>#{item.sifra}</Text>
+                              ) : null}
+                            </View>
+                            <Text style={styles.adminItemName}>{item.naziv}</Text>
+                            <Text style={styles.adminItemSub}>
+                              Jedinica: {item.jedinica_mere || 'kom'} | Na stanju: {item.kolicina_na_stanju ?? 0}
+                            </Text>
+                          </View>
+
+                          <View style={{ alignItems: 'flex-end', marginRight: 12 }}>
+                            <Text style={styles.adminItemPrice}>
+                              {(parseFloat(item.cena) || 0).toLocaleString('sr-RS', { minimumFractionDigits: 2 })} RSD
+                            </Text>
+                          </View>
+
+                          <View style={{ flexDirection: 'row', gap: 6 }}>
+                            <TouchableOpacity
+                              style={styles.catActionIconBtn}
+                              onPress={() => handleEditCatalogItem(item)}
+                              activeOpacity={0.7}
+                            >
+                              <Edit3 size={15} color="#0284C7" />
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                              style={[styles.catActionIconBtn, { backgroundColor: '#FEE2E2' }]}
+                              onPress={() => handleDeleteCatalogItem(item)}
+                              activeOpacity={0.7}
+                            >
+                              <Trash2 size={15} color="#DC2626" />
+                            </TouchableOpacity>
+                          </View>
+                        </View>
+                      ))
+                    )}
+                  </ScrollView>
+                )}
+              </View>
+            )}
           </View>
         </View>
       </Modal>
@@ -2521,6 +2927,197 @@ const styles = StyleSheet.create({
     borderRadius: 8
   },
   pinPickerConfirmBtnText: {
+    fontSize: 12.5,
+    fontWeight: '800',
+    color: '#FFFFFF'
+  },
+  headerCatalogBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#E0F2FE',
+    borderWidth: 1,
+    borderColor: '#BAE6FD',
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 8
+  },
+  headerCatalogBtnText: {
+    color: '#0284C7',
+    fontSize: 12,
+    fontWeight: '700'
+  },
+  catSearchBox: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F1F5F9',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    borderWidth: 1,
+    borderColor: '#E2E8F0'
+  },
+  catSearchInput: {
+    flex: 1,
+    paddingVertical: 8,
+    paddingHorizontal: 8,
+    fontSize: 13,
+    color: '#0F172A'
+  },
+  addNewItemBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#059669',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8
+  },
+  addNewItemBtnText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '700'
+  },
+  typeFilterBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 6,
+    backgroundColor: '#F1F5F9'
+  },
+  typeFilterBtnActive: {
+    backgroundColor: '#0284C7'
+  },
+  typeFilterBtnText: {
+    fontSize: 11.5,
+    fontWeight: '600',
+    color: '#64748B'
+  },
+  typeFilterBtnTextActive: {
+    color: '#FFFFFF'
+  },
+  adminCatRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    marginBottom: 8
+  },
+  adminTypeBadge: {
+    backgroundColor: '#E0F2FE',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4
+  },
+  adminTypeBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#0369A1'
+  },
+  adminCodeText: {
+    fontSize: 10.5,
+    color: '#64748B',
+    fontWeight: '600'
+  },
+  adminItemName: {
+    fontSize: 13.5,
+    fontWeight: '700',
+    color: '#0F172A'
+  },
+  adminItemSub: {
+    fontSize: 11,
+    color: '#64748B',
+    marginTop: 2
+  },
+  adminItemPrice: {
+    fontSize: 13.5,
+    fontWeight: '800',
+    color: '#059669'
+  },
+  catActionIconBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 6,
+    backgroundColor: '#F0F9FF',
+    justifyContent: 'center',
+    alignItems: 'center'
+  },
+  adminFormBox: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 8
+  },
+  adminTipBtn: {
+    flex: 1,
+    paddingVertical: 8,
+    alignItems: 'center',
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    backgroundColor: '#F8FAFC'
+  },
+  adminTipBtnActive: {
+    backgroundColor: '#0284C7',
+    borderColor: '#0284C7'
+  },
+  adminTipBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#64748B'
+  },
+  adminTipBtnTextActive: {
+    color: '#FFFFFF'
+  },
+  adminUnitChip: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 4,
+    backgroundColor: '#F1F5F9',
+    borderWidth: 1,
+    borderColor: '#E2E8F0'
+  },
+  adminUnitChipActive: {
+    backgroundColor: '#E0F2FE',
+    borderColor: '#0284C7'
+  },
+  adminUnitChipText: {
+    fontSize: 11,
+    color: '#64748B',
+    fontWeight: '600'
+  },
+  adminUnitChipTextActive: {
+    color: '#0284C7',
+    fontWeight: '800'
+  },
+  adminFormActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 10,
+    marginTop: 20,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#E2E8F0'
+  },
+  adminCancelBtn: {
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    borderRadius: 8,
+    backgroundColor: '#F1F5F9'
+  },
+  adminCancelBtnText: {
+    fontSize: 12.5,
+    fontWeight: '700',
+    color: '#64748B'
+  },
+  adminSaveBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 9,
+    borderRadius: 8,
+    backgroundColor: '#0284C7'
+  },
+  adminSaveBtnText: {
     fontSize: 12.5,
     fontWeight: '800',
     color: '#FFFFFF'

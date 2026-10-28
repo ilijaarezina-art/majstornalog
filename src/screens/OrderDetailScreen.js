@@ -39,7 +39,14 @@ import {
   AlertTriangle,
   History,
   Inbox,
-  RotateCcw
+  RotateCcw,
+  Package,
+  Minus,
+  Save,
+  Search,
+  Tag,
+  Boxes,
+  Layers
 } from 'lucide-react-native';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../services/api';
@@ -83,6 +90,20 @@ export default function OrderDetailScreen({ orderId, onBack }) {
   const [delayReason, setDelayReason] = useState('');
   const [catalogItems, setCatalogItems] = useState([]);
   const [searchCatalogQuery, setSearchCatalogQuery] = useState('');
+
+  // Režim i forma za kreiranje novih artikala u katalogu
+  const [catalogViewMode, setCatalogViewMode] = useState('list'); // 'list' | 'create'
+  const [catalogTypeFilter, setCatalogTypeFilter] = useState('ALL'); // 'ALL' | 'DEO' | 'USLUGA' | 'MATERIJAL'
+  const [newCatalogForm, setNewCatalogForm] = useState({
+    naziv: '',
+    tip: 'DEO',
+    jedinica_mere: 'kom',
+    cena: '',
+    sifra: '',
+    kolicinaZaNalog: '1'
+  });
+  const [savingCatalogItem, setSavingCatalogItem] = useState(false);
+  const [savingDraftItems, setSavingDraftItems] = useState(false);
 
   // Dispečersko / Admin upravljanje nalogom (Promena radnika i brisanje naloga)
   const [workersList, setWorkersList] = useState([]);
@@ -210,9 +231,10 @@ export default function OrderDetailScreen({ orderId, onBack }) {
     }
   };
 
-  const loadCatalog = async (q = '') => {
+  const loadCatalog = async (q = searchCatalogQuery, type = catalogTypeFilter) => {
     try {
-      const res = await api.getCatalog(firmId, q);
+      const typeParam = type === 'ALL' ? '' : type;
+      const res = await api.getCatalog(firmId, q, typeParam);
       setCatalogItems(res || []);
     } catch (err) {
       console.warn('Greška kataloga:', err);
@@ -220,33 +242,120 @@ export default function OrderDetailScreen({ orderId, onBack }) {
   };
 
   const handleOpenCatalog = () => {
-    loadCatalog(searchCatalogQuery);
+    setCatalogViewMode('list');
+    setCatalogTypeFilter('ALL');
+    setSearchCatalogQuery('');
+    loadCatalog('', 'ALL');
     setShowCatalogModal(true);
   };
 
-  const handleAddItemFromCatalog = (catItem) => {
+  const handleAddItemFromCatalog = (catItem, customQty = 1) => {
+    const qtyToAdd = parseFloat(customQty) || 1;
     const existingIndex = items.findIndex(i => i.katalog_id === catItem.id);
     if (existingIndex > -1) {
       const updated = [...items];
-      updated[existingIndex].kolicina = Number(updated[existingIndex].kolicina) + 1;
-      updated[existingIndex].ukupno = updated[existingIndex].kolicina * updated[existingIndex].jedinicna_cena;
+      updated[existingIndex].kolicina = Number(updated[existingIndex].kolicina) + qtyToAdd;
+      updated[existingIndex].ukupno = Math.round(updated[existingIndex].kolicina * updated[existingIndex].jedinicna_cena * 100) / 100;
       setItems(updated);
     } else {
       const newItem = {
         katalog_id: catItem.id,
         naziv: catItem.naziv,
         jedinica_mere: catItem.jedinica_mere || 'kom',
-        kolicina: 1,
+        kolicina: qtyToAdd,
         jedinicna_cena: parseFloat(catItem.cena || 0),
-        ukupno: parseFloat(catItem.cena || 0)
+        ukupno: Math.round(qtyToAdd * parseFloat(catItem.cena || 0) * 100) / 100
       };
       setItems([...items, newItem]);
     }
     setShowCatalogModal(false);
   };
 
+  const handleUpdateItemQuantity = (index, delta) => {
+    const updated = [...items];
+    const currentQty = parseFloat(updated[index].kolicina) || 1;
+    const newQty = Math.max(1, currentQty + delta);
+    updated[index].kolicina = newQty;
+    updated[index].ukupno = Math.round(newQty * parseFloat(updated[index].jedinicna_cena) * 100) / 100;
+    setItems(updated);
+  };
+
   const handleRemoveItem = (index) => {
     setItems(items.filter((_, idx) => idx !== index));
+  };
+
+  const handleSaveNewCatalogItem = async (addToOrderImmediately = true) => {
+    if (!newCatalogForm.naziv.trim()) {
+      const msg = 'Naziv dela ili usluge je obavezan.';
+      if (Platform.OS === 'web') window.alert(msg);
+      else Alert.alert('Obavezno polje', msg);
+      return;
+    }
+
+    const priceNum = parseFloat(newCatalogForm.cena) || 0;
+    const qtyForOrder = parseFloat(newCatalogForm.kolicinaZaNalog) || 1;
+
+    try {
+      setSavingCatalogItem(true);
+      const saved = await api.saveCatalogItem({
+        firma_id: firmId,
+        naziv: newCatalogForm.naziv.trim(),
+        tip: newCatalogForm.tip,
+        jedinica_mere: newCatalogForm.jedinica_mere.trim() || 'kom',
+        cena: priceNum,
+        sifra: newCatalogForm.sifra.trim(),
+        kolicina_na_stanju: 100
+      });
+
+      await loadCatalog(searchCatalogQuery, catalogTypeFilter);
+
+      if (addToOrderImmediately && saved) {
+        const newItem = {
+          katalog_id: saved.id,
+          naziv: saved.naziv,
+          jedinica_mere: saved.jedinica_mere || 'kom',
+          kolicina: qtyForOrder,
+          jedinicna_cena: priceNum,
+          ukupno: Math.round(qtyForOrder * priceNum * 100) / 100
+        };
+        setItems(prev => [...prev, newItem]);
+        setShowCatalogModal(false);
+        setCatalogViewMode('list');
+      } else {
+        setCatalogViewMode('list');
+      }
+
+      setNewCatalogForm({
+        naziv: '',
+        tip: 'DEO',
+        jedinica_mere: 'kom',
+        cena: '',
+        sifra: '',
+        kolicinaZaNalog: '1'
+      });
+    } catch (e) {
+      const errMsg = e.message || 'Greška pri kreiranju artikla u katalogu.';
+      if (Platform.OS === 'web') window.alert(errMsg);
+      else Alert.alert('Greška', errMsg);
+    } finally {
+      setSavingCatalogItem(false);
+    }
+  };
+
+  const handleSaveDraftItems = async () => {
+    try {
+      setSavingDraftItems(true);
+      await api.saveOrderItems(orderId, items, workDescription, paymentMethod);
+      const okMsg = 'Utrošeni delovi i stavke su uspešno sačuvani u radnom nalogu.';
+      if (Platform.OS === 'web') window.alert(okMsg);
+      else Alert.alert('Sačuvano', okMsg);
+    } catch (err) {
+      const errMsg = err.message || 'Neuspešno čuvanje stavki.';
+      if (Platform.OS === 'web') window.alert(errMsg);
+      else Alert.alert('Greška', errMsg);
+    } finally {
+      setSavingDraftItems(false);
+    }
   };
 
   const calculateTotal = () => {
@@ -656,7 +765,7 @@ export default function OrderDetailScreen({ orderId, onBack }) {
         </View>
 
         {items.length === 0 ? (
-          <Text style={styles.emptyItemsText}>Nema unetih stavki. Kliknite na dugme iznad za izbor iz kataloga.</Text>
+          <Text style={styles.emptyItemsText}>Nema unetih stavki. Kliknite na dugme iznad za izbor ili kreiranje delova.</Text>
         ) : (
           <View style={styles.itemsTable}>
             {items.map((item, idx) => (
@@ -664,9 +773,34 @@ export default function OrderDetailScreen({ orderId, onBack }) {
                 <View style={{ flex: 1 }}>
                   <Text style={styles.itemName}>{item.naziv}</Text>
                   <Text style={styles.itemSub}>
-                    {item.kolicina} {item.jedinica_mere || 'kom'} x {Number(item.jedinicna_cena).toLocaleString('sr-RS')} RSD
+                    {item.jedinica_mere || 'kom'} x {Number(item.jedinicna_cena).toLocaleString('sr-RS')} RSD
                   </Text>
                 </View>
+
+                {/* Količina i Stepper [-] [QTY] [+] */}
+                {!isDone ? (
+                  <View style={styles.qtyStepperRow}>
+                    <TouchableOpacity
+                      style={styles.qtyStepBtn}
+                      onPress={() => handleUpdateItemQuantity(idx, -1)}
+                      disabled={Number(item.kolicina) <= 1}
+                      activeOpacity={0.7}
+                    >
+                      <Minus size={12} color={Number(item.kolicina) <= 1 ? '#CBD5E1' : '#0F172A'} />
+                    </TouchableOpacity>
+                    <Text style={styles.qtyValueText}>{item.kolicina}</Text>
+                    <TouchableOpacity
+                      style={styles.qtyStepBtn}
+                      onPress={() => handleUpdateItemQuantity(idx, 1)}
+                      activeOpacity={0.7}
+                    >
+                      <Plus size={12} color="#0F172A" />
+                    </TouchableOpacity>
+                  </View>
+                ) : (
+                  <Text style={styles.qtyStaticText}>{item.kolicina} {item.jedinica_mere || 'kom'}</Text>
+                )}
+
                 <Text style={styles.itemPrice}>{Number(item.ukupno).toLocaleString('sr-RS')} RSD</Text>
                 {!isDone && (
                   <TouchableOpacity onPress={() => handleRemoveItem(idx)} style={{ marginLeft: 10 }}>
@@ -680,6 +814,27 @@ export default function OrderDetailScreen({ orderId, onBack }) {
               <Text style={styles.totalLabel}>UKUPNO ZA NAPLATU:</Text>
               <Text style={styles.totalValue}>{totalPrice.toLocaleString('sr-RS')} RSD</Text>
             </View>
+
+            {/* Brzo čuvanje stavki u toku rada */}
+            {!isDone && items.length > 0 && (
+              <View style={styles.draftSaveRow}>
+                <TouchableOpacity
+                  style={styles.draftSaveBtn}
+                  onPress={handleSaveDraftItems}
+                  disabled={savingDraftItems}
+                  activeOpacity={0.8}
+                >
+                  {savingDraftItems ? (
+                    <ActivityIndicator size="small" color="#0284C7" />
+                  ) : (
+                    <>
+                      <Save size={13} color="#0284C7" style={{ marginRight: 5 }} />
+                      <Text style={styles.draftSaveBtnText}>Sačuvaj stavke u radni nalog</Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+              </View>
+            )}
           </View>
         )}
       </View>
@@ -958,45 +1113,335 @@ export default function OrderDetailScreen({ orderId, onBack }) {
         </ScrollView>
       )}
 
-      {/* Catalog Items Modal */}
+      {/* Catalog Items Modal: Izbor i Kreiranje novih delova i usluga */}
       <Modal visible={showCatalogModal} animationType="slide" transparent>
         <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
+          <View style={[styles.modalContent, { maxWidth: 640, maxHeight: '90%' }]}>
+            {/* Modal Header */}
             <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Izbor delova i usluga sa lagera</Text>
-              <TouchableOpacity onPress={() => setShowCatalogModal(false)}>
-                <Text style={styles.modalCloseText}>Zatvori</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <Package size={20} color="#0284C7" />
+                <View>
+                  <Text style={styles.modalTitle}>Utrošeni delovi i radni nalozi</Text>
+                  <Text style={styles.modalSubHeader}>Šifarnik materijala, delova i usluga servisa</Text>
+                </View>
+              </View>
+              <TouchableOpacity onPress={() => setShowCatalogModal(false)} style={styles.modalCloseIconBtn}>
+                <X size={20} color="#64748B" />
               </TouchableOpacity>
             </View>
 
-            <TextInput
-              style={styles.searchModalInput}
-              placeholder="Pretraži delove i usluge..."
-              placeholderTextColor="#94A3B8"
-              value={searchCatalogQuery}
-              onChangeText={(text) => {
-                setSearchCatalogQuery(text);
-                loadCatalog(text);
-              }}
-            />
+            {/* Segmented Mode Switch: Izbor sa lagera vs. Kreiraj novi artikal */}
+            <View style={styles.catalogTabRow}>
+              <TouchableOpacity
+                style={[styles.catalogTabBtn, catalogViewMode === 'list' && styles.catalogTabBtnActive]}
+                onPress={() => setCatalogViewMode('list')}
+                activeOpacity={0.8}
+              >
+                <Search size={14} color={catalogViewMode === 'list' ? '#0284C7' : '#64748B'} style={{ marginRight: 6 }} />
+                <Text style={[styles.catalogTabBtnText, catalogViewMode === 'list' && styles.catalogTabBtnTextActive]}>
+                  Izbor sa lagera ({catalogItems.length})
+                </Text>
+              </TouchableOpacity>
 
-            <FlatList
-              data={catalogItems}
-              keyExtractor={(item) => String(item.id)}
-              renderItem={({ item }) => (
+              <TouchableOpacity
+                style={[styles.catalogTabBtn, catalogViewMode === 'create' && styles.catalogTabBtnActive]}
+                onPress={() => setCatalogViewMode('create')}
+                activeOpacity={0.8}
+              >
+                <Plus size={15} color={catalogViewMode === 'create' ? '#0284C7' : '#64748B'} style={{ marginRight: 6 }} />
+                <Text style={[styles.catalogTabBtnText, catalogViewMode === 'create' && styles.catalogTabBtnTextActive]}>
+                  + Kreiraj novi artikal
+                </Text>
+              </TouchableOpacity>
+            </View>
+
+            {catalogViewMode === 'list' ? (
+              <View style={{ flex: 1, minHeight: 320 }}>
+                {/* Banner CTA za kreiranje novog artikla */}
                 <TouchableOpacity
-                  style={styles.catItemRow}
-                  onPress={() => handleAddItemFromCatalog(item)}
-                  activeOpacity={0.7}
+                  style={styles.newArticleBanner}
+                  onPress={() => setCatalogViewMode('create')}
+                  activeOpacity={0.8}
                 >
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.catItemName}>{item.naziv}</Text>
-                    <Text style={styles.catItemSub}>Šifra: {item.sifra || '-'} • Tip: {item.tip}</Text>
+                  <View style={{ flex: 1, paddingRight: 8 }}>
+                    <Text style={styles.newArticleBannerTitle}>Nemate traženi deo ili uslugu na spisku?</Text>
+                    <Text style={styles.newArticleBannerSub}>Kliknite ovde da kreirate novi artikal i odmah ga upišete u radni nalog</Text>
                   </View>
-                  <Text style={styles.catItemPrice}>{Number(item.cena).toLocaleString('sr-RS')} RSD</Text>
+                  <View style={styles.newArticleBannerBtn}>
+                    <Plus size={14} color="#FFFFFF" style={{ marginRight: 4 }} />
+                    <Text style={styles.newArticleBannerBtnText}>Novi artikal</Text>
+                  </View>
                 </TouchableOpacity>
-              )}
-            />
+
+                {/* Pretraga i Filteri */}
+                <View style={styles.catalogSearchRow}>
+                  <Search size={15} color="#94A3B8" style={{ marginLeft: 10, marginRight: 6 }} />
+                  <TextInput
+                    style={styles.catalogSearchInput}
+                    placeholder="Pretraži po nazivu ili šifri..."
+                    placeholderTextColor="#94A3B8"
+                    value={searchCatalogQuery}
+                    onChangeText={(text) => {
+                      setSearchCatalogQuery(text);
+                      loadCatalog(text, catalogTypeFilter);
+                    }}
+                  />
+                  {searchCatalogQuery ? (
+                    <TouchableOpacity
+                      onPress={() => {
+                        setSearchCatalogQuery('');
+                        loadCatalog('', catalogTypeFilter);
+                      }}
+                      style={{ padding: 6, marginRight: 4 }}
+                    >
+                      <X size={14} color="#64748B" />
+                    </TouchableOpacity>
+                  ) : null}
+                </View>
+
+                {/* Filter čipovi: Sve, Delovi, Usluge, Materijal */}
+                <View style={styles.typeFilterRow}>
+                  {[
+                    { id: 'ALL', label: 'Sve' },
+                    { id: 'DEO', label: '🔧 Delovi' },
+                    { id: 'USLUGA', label: '⏱️ Usluge' },
+                    { id: 'MATERIJAL', label: '📦 Materijal' }
+                  ].map(tf => {
+                    const isSel = catalogTypeFilter === tf.id;
+                    return (
+                      <TouchableOpacity
+                        key={tf.id}
+                        style={[styles.typeFilterChip, isSel && styles.typeFilterChipActive]}
+                        onPress={() => {
+                          setCatalogTypeFilter(tf.id);
+                          loadCatalog(searchCatalogQuery, tf.id);
+                        }}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={[styles.typeFilterChipText, isSel && styles.typeFilterChipTextActive]}>
+                          {tf.label}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+
+                {/* Lista artikala */}
+                <FlatList
+                  data={catalogItems}
+                  keyExtractor={(item) => String(item.id)}
+                  style={{ flex: 1, marginTop: 4 }}
+                  ListEmptyComponent={
+                    <View style={styles.emptyCatalogWrap}>
+                      <Boxes size={32} color="#94A3B8" style={{ marginBottom: 6 }} />
+                      <Text style={styles.emptyCatalogTitle}>Nije pronađen nijedan artikal.</Text>
+                      <TouchableOpacity
+                        style={styles.emptyCreateBtn}
+                        onPress={() => {
+                          if (searchCatalogQuery) {
+                            setNewCatalogForm(p => ({ ...p, naziv: searchCatalogQuery }));
+                          }
+                          setCatalogViewMode('create');
+                        }}
+                        activeOpacity={0.8}
+                      >
+                        <Plus size={14} color="#FFFFFF" style={{ marginRight: 6 }} />
+                        <Text style={styles.emptyCreateBtnText}>
+                          Kreiraj "{searchCatalogQuery || 'novi artikal'}"
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                  }
+                  renderItem={({ item }) => {
+                    const isDeo = item.tip === 'DEO';
+                    const isUsluga = item.tip === 'USLUGA';
+                    const badgeBg = isDeo ? '#FEF3C7' : (isUsluga ? '#E0F2FE' : '#F1F5F9');
+                    const badgeColor = isDeo ? '#B45309' : (isUsluga ? '#0369A1' : '#475569');
+
+                    return (
+                      <View style={styles.catItemCard}>
+                        <View style={{ flex: 1, paddingRight: 10 }}>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 2 }}>
+                            <View style={[styles.typeBadge, { backgroundColor: badgeBg }]}>
+                              <Text style={[styles.typeBadgeText, { color: badgeColor }]}>{item.tip}</Text>
+                            </View>
+                            {item.sifra ? <Text style={styles.itemCodeText}>{item.sifra}</Text> : null}
+                          </View>
+                          <Text style={styles.catItemName}>{item.naziv}</Text>
+                          <Text style={styles.catItemStockText}>
+                            Jedinica: <Text style={{ fontWeight: '700' }}>{item.jedinica_mere || 'kom'}</Text>
+                            {item.kolicina_na_stanju ? ` • Na stanju: ${parseFloat(item.kolicina_na_stanju)}` : ''}
+                          </Text>
+                        </View>
+
+                        <View style={{ alignItems: 'flex-end', gap: 6 }}>
+                          <Text style={styles.catItemPrice}>{Number(item.cena).toLocaleString('sr-RS')} RSD</Text>
+                          <TouchableOpacity
+                            style={styles.addCatItemBtn}
+                            onPress={() => handleAddItemFromCatalog(item, 1)}
+                            activeOpacity={0.8}
+                          >
+                            <Plus size={13} color="#FFFFFF" style={{ marginRight: 3 }} />
+                            <Text style={styles.addCatItemBtnText}>Dodaj</Text>
+                          </TouchableOpacity>
+                        </View>
+                      </View>
+                    );
+                  }}
+                />
+              </View>
+            ) : (
+              /* KREIRANJE NOVOG ARTIKLA / DELA / USLUGE */
+              <ScrollView style={{ flex: 1, maxHeight: 480, paddingVertical: 4 }}>
+                <View style={styles.createFormCard}>
+                  <Text style={styles.createFormTitle}>Kreiranje novog artikla / usluge</Text>
+                  <Text style={styles.createFormSub}>
+                    Definišite artikal koji će biti trajno upisan u šifarnik i odmah dodat u radni nalog klijenta.
+                  </Text>
+
+                  {/* 1. Naziv */}
+                  <Text style={styles.formLabel}>Naziv dela ili usluge *</Text>
+                  <TextInput
+                    style={styles.formInput}
+                    placeholder="Npr. Startni kondenzator 35uF, Zamena ležaja..."
+                    placeholderTextColor="#94A3B8"
+                    value={newCatalogForm.naziv}
+                    onChangeText={(t) => setNewCatalogForm(p => ({ ...p, naziv: t }))}
+                  />
+
+                  {/* 2. Tip artikla */}
+                  <Text style={styles.formLabel}>Tip stavke:</Text>
+                  <View style={styles.tipSelectorRow}>
+                    {[
+                      { id: 'DEO', label: '🔧 Rezervni deo', desc: 'Ugrađeni deo' },
+                      { id: 'USLUGA', label: '⏱️ Usluga / Rad', desc: 'Radni sati i servis' },
+                      { id: 'MATERIJAL', label: '📦 Materijal', desc: 'Potrošni materijal' }
+                    ].map(t => {
+                      const isSel = newCatalogForm.tip === t.id;
+                      return (
+                        <TouchableOpacity
+                          key={t.id}
+                          style={[styles.tipBtn, isSel && styles.tipBtnActive]}
+                          onPress={() => setNewCatalogForm(p => ({ ...p, tip: t.id }))}
+                          activeOpacity={0.8}
+                        >
+                          <Text style={[styles.tipBtnText, isSel && styles.tipBtnTextActive]}>{t.label}</Text>
+                          <Text style={[styles.tipBtnSub, isSel && styles.tipBtnSubActive]}>{t.desc}</Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+
+                  {/* 3. Cena i Jedinica mere */}
+                  <View style={{ flexDirection: 'row', gap: 10, marginTop: 8 }}>
+                    <View style={{ flex: 1.2 }}>
+                      <Text style={styles.formLabel}>Cena po jedinici (RSD) *</Text>
+                      <TextInput
+                        style={styles.formInput}
+                        placeholder="Npr. 1800"
+                        placeholderTextColor="#94A3B8"
+                        keyboardType="numeric"
+                        value={newCatalogForm.cena}
+                        onChangeText={(t) => setNewCatalogForm(p => ({ ...p, cena: t }))}
+                      />
+                    </View>
+
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.formLabel}>Jedinica mere</Text>
+                      <TextInput
+                        style={styles.formInput}
+                        placeholder="kom, m, kg, sat..."
+                        placeholderTextColor="#94A3B8"
+                        value={newCatalogForm.jedinica_mere}
+                        onChangeText={(t) => setNewCatalogForm(p => ({ ...p, jedinica_mere: t }))}
+                      />
+                    </View>
+                  </View>
+
+                  {/* Brzi izbor uobičajenih jedinica mera */}
+                  <View style={styles.unitChipsRow}>
+                    {['kom', 'm', 'kg', 'l', 'sat', 'set'].map(u => (
+                      <TouchableOpacity
+                        key={u}
+                        style={[styles.unitChip, newCatalogForm.jedinica_mere === u && styles.unitChipActive]}
+                        onPress={() => setNewCatalogForm(p => ({ ...p, jedinica_mere: u }))}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={[styles.unitChipText, newCatalogForm.jedinica_mere === u && styles.unitChipTextActive]}>
+                          {u}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+
+                  {/* 4. Količina za radni nalog i Šifra */}
+                  <View style={{ flexDirection: 'row', gap: 10, marginTop: 8 }}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.formLabel}>Količina za ovaj nalog</Text>
+                      <TextInput
+                        style={styles.formInput}
+                        placeholder="1"
+                        placeholderTextColor="#94A3B8"
+                        keyboardType="numeric"
+                        value={newCatalogForm.kolicinaZaNalog}
+                        onChangeText={(t) => setNewCatalogForm(p => ({ ...p, kolicinaZaNalog: t }))}
+                      />
+                    </View>
+
+                    <View style={{ flex: 1.2 }}>
+                      <Text style={styles.formLabel}>Šifra artikla (opciono)</Text>
+                      <TextInput
+                        style={styles.formInput}
+                        placeholder="Npr. DEL-05"
+                        placeholderTextColor="#94A3B8"
+                        value={newCatalogForm.sifra}
+                        onChangeText={(t) => setNewCatalogForm(p => ({ ...p, sifra: t }))}
+                      />
+                    </View>
+                  </View>
+
+                  {/* Dugmad za akciju */}
+                  <View style={styles.createActionRow}>
+                    <TouchableOpacity
+                      style={styles.backToListBtn}
+                      onPress={() => setCatalogViewMode('list')}
+                      activeOpacity={0.7}
+                    >
+                      <ArrowLeft size={14} color="#64748B" style={{ marginRight: 4 }} />
+                      <Text style={styles.backToListBtnText}>Nazad na spisak</Text>
+                    </TouchableOpacity>
+
+                    <View style={{ flexDirection: 'row', gap: 8 }}>
+                      <TouchableOpacity
+                        style={styles.saveCatalogOnlyBtn}
+                        onPress={() => handleSaveNewCatalogItem(false)}
+                        disabled={savingCatalogItem}
+                        activeOpacity={0.8}
+                      >
+                        <Text style={styles.saveCatalogOnlyBtnText}>Samo u katalog</Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        style={styles.saveAndAddBtn}
+                        onPress={() => handleSaveNewCatalogItem(true)}
+                        disabled={savingCatalogItem}
+                        activeOpacity={0.8}
+                      >
+                        {savingCatalogItem ? (
+                          <ActivityIndicator size="small" color="#FFFFFF" />
+                        ) : (
+                          <>
+                            <Check size={16} color="#FFFFFF" style={{ marginRight: 6 }} />
+                            <Text style={styles.saveAndAddBtnText}>Sačuvaj i dodaj u nalog</Text>
+                          </>
+                        )}
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                </View>
+              </ScrollView>
+            )}
           </View>
         </View>
       </Modal>
@@ -1796,44 +2241,387 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: '#0F172A'
   },
-  modalCloseText: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: colors.primary
-  },
-  searchModalInput: {
-    backgroundColor: '#F8FAFC',
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    fontSize: 13,
-    color: '#0F172A',
-    marginVertical: 12
-  },
-  catItemRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F1F5F9'
-  },
-  catItemName: {
-    fontSize: 13.5,
-    fontWeight: '700',
-    color: '#0F172A'
-  },
-  catItemSub: {
+  modalSubHeader: {
     fontSize: 11.5,
     color: '#64748B',
     marginTop: 2
   },
+  modalCloseIconBtn: {
+    padding: 6,
+    borderRadius: 8,
+    backgroundColor: '#F1F5F9'
+  },
+  catalogTabRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 12,
+    marginBottom: 10
+  },
+  catalogTabBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 9,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0'
+  },
+  catalogTabBtnActive: {
+    backgroundColor: '#EFF6FF',
+    borderColor: '#0284C7'
+  },
+  catalogTabBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#64748B'
+  },
+  catalogTabBtnTextActive: {
+    color: '#0284C7'
+  },
+  newArticleBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#F0FDF4',
+    borderWidth: 1,
+    borderColor: '#BBF7D0',
+    borderRadius: 10,
+    padding: 10,
+    marginBottom: 10
+  },
+  newArticleBannerTitle: {
+    fontSize: 12.5,
+    fontWeight: '800',
+    color: '#166534'
+  },
+  newArticleBannerSub: {
+    fontSize: 11,
+    color: '#15803D',
+    marginTop: 2
+  },
+  newArticleBannerBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#16A34A',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 7
+  },
+  newArticleBannerBtnText: {
+    fontSize: 11.5,
+    fontWeight: '800',
+    color: '#FFFFFF'
+  },
+  catalogSearchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 9,
+    marginBottom: 8
+  },
+  catalogSearchInput: {
+    flex: 1,
+    paddingVertical: 8,
+    paddingHorizontal: 8,
+    fontSize: 13,
+    color: '#0F172A'
+  },
+  typeFilterRow: {
+    flexDirection: 'row',
+    gap: 6,
+    marginBottom: 8
+  },
+  typeFilterChip: {
+    paddingHorizontal: 9,
+    paddingVertical: 4.5,
+    borderRadius: 6,
+    backgroundColor: '#F1F5F9',
+    borderWidth: 1,
+    borderColor: '#E2E8F0'
+  },
+  typeFilterChipActive: {
+    backgroundColor: '#0284C7',
+    borderColor: '#0284C7'
+  },
+  typeFilterChipText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#475569'
+  },
+  typeFilterChipTextActive: {
+    color: '#FFFFFF'
+  },
+  emptyCatalogWrap: {
+    paddingVertical: 28,
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  emptyCatalogTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#64748B',
+    marginBottom: 10
+  },
+  emptyCreateBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#0284C7',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 8
+  },
+  emptyCreateBtnText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#FFFFFF'
+  },
+  catItemCard: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    backgroundColor: '#F8FAFC',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#F1F5F9',
+    marginBottom: 6
+  },
+  typeBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 1.5,
+    borderRadius: 4
+  },
+  typeBadgeText: {
+    fontSize: 9.5,
+    fontWeight: '800'
+  },
+  itemCodeText: {
+    fontSize: 10.5,
+    color: '#94A3B8',
+    fontWeight: '600'
+  },
+  catItemName: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#0F172A',
+    marginBottom: 2
+  },
+  catItemStockText: {
+    fontSize: 11,
+    color: '#64748B'
+  },
   catItemPrice: {
     fontSize: 13.5,
+    fontWeight: '900',
+    color: '#0284C7'
+  },
+  addCatItemBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#0284C7',
+    paddingHorizontal: 10,
+    paddingVertical: 4.5,
+    borderRadius: 6
+  },
+  addCatItemBtnText: {
+    fontSize: 11.5,
     fontWeight: '800',
-    color: colors.primary
+    color: '#FFFFFF'
+  },
+  createFormCard: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 12,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: '#E2E8F0'
+  },
+  createFormTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#0F172A'
+  },
+  createFormSub: {
+    fontSize: 11.5,
+    color: '#64748B',
+    marginTop: 2,
+    marginBottom: 12
+  },
+  formLabel: {
+    fontSize: 11.5,
+    fontWeight: '700',
+    color: '#334155',
+    marginBottom: 4,
+    marginTop: 6
+  },
+  formInput: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    fontSize: 12.5,
+    color: '#0F172A'
+  },
+  tipSelectorRow: {
+    flexDirection: 'row',
+    gap: 8
+  },
+  tipBtn: {
+    flex: 1,
+    paddingVertical: 8,
+    paddingHorizontal: 6,
+    borderRadius: 8,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    alignItems: 'center'
+  },
+  tipBtnActive: {
+    backgroundColor: '#EFF6FF',
+    borderColor: '#0284C7'
+  },
+  tipBtnText: {
+    fontSize: 11.5,
+    fontWeight: '800',
+    color: '#475569'
+  },
+  tipBtnTextActive: {
+    color: '#0284C7'
+  },
+  tipBtnSub: {
+    fontSize: 9.5,
+    color: '#94A3B8',
+    marginTop: 2
+  },
+  tipBtnSubActive: {
+    color: '#0369A1'
+  },
+  unitChipsRow: {
+    flexDirection: 'row',
+    gap: 6,
+    marginTop: 6
+  },
+  unitChip: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#CBD5E1'
+  },
+  unitChipActive: {
+    backgroundColor: '#0284C7',
+    borderColor: '#0284C7'
+  },
+  unitChipText: {
+    fontSize: 10.5,
+    fontWeight: '700',
+    color: '#64748B'
+  },
+  unitChipTextActive: {
+    color: '#FFFFFF'
+  },
+  createActionRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: 18,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#E2E8F0'
+  },
+  backToListBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 10
+  },
+  backToListBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#64748B'
+  },
+  saveCatalogOnlyBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+    backgroundColor: '#F1F5F9',
+    borderWidth: 1,
+    borderColor: '#CBD5E1'
+  },
+  saveCatalogOnlyBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#475569'
+  },
+  saveAndAddBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 8,
+    backgroundColor: '#059669'
+  },
+  saveAndAddBtnText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#FFFFFF'
+  },
+  qtyStepperRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginHorizontal: 10,
+    backgroundColor: '#F1F5F9',
+    borderRadius: 7,
+    borderWidth: 1,
+    borderColor: '#E2E8F0'
+  },
+  qtyStepBtn: {
+    paddingHorizontal: 7,
+    paddingVertical: 4
+  },
+  qtyValueText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#0F172A',
+    minWidth: 20,
+    textAlign: 'center'
+  },
+  qtyStaticText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#64748B',
+    marginHorizontal: 10
+  },
+  draftSaveRow: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    marginTop: 10,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#F1F5F9'
+  },
+  draftSaveBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F0F9FF',
+    borderWidth: 1,
+    borderColor: '#BAE6FD',
+    borderRadius: 7,
+    paddingHorizontal: 11,
+    paddingVertical: 6
+  },
+  draftSaveBtnText: {
+    fontSize: 11.5,
+    fontWeight: '700',
+    color: '#0284C7'
   },
   cancelModalBtn: {
     paddingHorizontal: 14,

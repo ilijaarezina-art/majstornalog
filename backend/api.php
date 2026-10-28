@@ -213,6 +213,50 @@ try {
             $conn->exec("ALTER TABLE majstori_lokacija ADD COLUMN `poslednje_azuriranje` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp()");
         }
     }
+
+    // 9. Samozaceljujuća migracija za katalog delova i stavke naloga
+    $conn->exec("
+        CREATE TABLE IF NOT EXISTS `katalog_delova_i_usluga` (
+          `id` int(11) NOT NULL AUTO_INCREMENT,
+          `firma_id` int(11) NOT NULL,
+          `sifra` varchar(50) DEFAULT NULL,
+          `naziv` varchar(150) NOT NULL,
+          `tip` enum('DEO','USLUGA','MATERIJAL') DEFAULT 'DEO',
+          `jedinica_mere` varchar(20) DEFAULT 'kom',
+          `cena` decimal(10,2) NOT NULL DEFAULT 0.00,
+          `kolicina_na_stanju` decimal(10,2) DEFAULT 0.00,
+          `aktivan` tinyint(1) DEFAULT 1,
+          PRIMARY KEY (`id`),
+          KEY `idx_firma_katalog` (`firma_id`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    ");
+
+    $conn->exec("
+        CREATE TABLE IF NOT EXISTS `nalozi_stavke` (
+          `id` int(11) NOT NULL AUTO_INCREMENT,
+          `nalog_id` int(11) NOT NULL,
+          `katalog_id` int(11) DEFAULT NULL,
+          `naziv` varchar(150) NOT NULL,
+          `jedinica_mere` varchar(20) DEFAULT 'kom',
+          `kolicina` decimal(8,2) NOT NULL DEFAULT 1.00,
+          `jedinicna_cena` decimal(10,2) NOT NULL DEFAULT 0.00,
+          `ukupno` decimal(10,2) NOT NULL DEFAULT 0.00,
+          PRIMARY KEY (`id`),
+          KEY `idx_nalog_stavka` (`nalog_id`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    ");
+
+    $chkCat = $conn->query("SELECT COUNT(*) FROM katalog_delova_i_usluga")->fetchColumn();
+    if ($chkCat == 0) {
+        $conn->exec("
+            INSERT INTO `katalog_delova_i_usluga` (`firma_id`, `sifra`, `naziv`, `tip`, `jedinica_mere`, `cena`, `kolicina_na_stanju`) VALUES
+            (1, 'USL-01', 'Godišnji servis i pranje klime', 'USLUGA', 'kom', 3500.00, 999.00),
+            (1, 'USL-02', 'Montaža klima uređaja do 3m instalacije', 'USLUGA', 'kom', 12000.00, 999.00),
+            (1, 'DEL-01', 'Freon R32 (dopuna po 100g)', 'DEO', '100g', 800.00, 150.00),
+            (1, 'DEL-02', 'Startni kondenzator 35uF', 'DEO', 'kom', 1800.00, 24.00),
+            (1, 'DEL-03', 'Kondenzaciono crevo fi 16 (metar)', 'DEO', 'm', 150.00, 120.00)
+        ");
+    }
 } catch (Exception $migErr) {
     // Tiho ignoriši ako kolone već postoje
 }
@@ -803,8 +847,9 @@ elseif ($action === 'assign_order_worker') {
 elseif ($action === 'get_catalog') {
     $firma_id = isset($_GET['firma_id']) ? intval($_GET['firma_id']) : 1;
     $query = isset($_GET['q']) ? trim($_GET['q']) : '';
+    $tip = isset($_GET['tip']) ? trim($_GET['tip']) : '';
 
-    $sql = "SELECT * FROM katalog_delova_i_usluga WHERE firma_id = ? AND aktivan = 1";
+    $sql = "SELECT * FROM katalog_delova_i_usluga WHERE (firma_id = ? OR firma_id = 1) AND aktivan = 1";
     $params = [$firma_id];
 
     if (!empty($query)) {
@@ -813,12 +858,143 @@ elseif ($action === 'get_catalog') {
         $params[] = "%{$query}%";
     }
 
+    if (!empty($tip) && in_array($tip, ['DEO', 'USLUGA', 'MATERIJAL'])) {
+        $sql .= " AND tip = ?";
+        $params[] = $tip;
+    }
+
     $sql .= " ORDER BY tip DESC, naziv ASC";
     $stmt = $conn->prepare($sql);
     $stmt->execute($params);
     $items = $stmt->fetchAll();
 
     sendResponse('success', $items);
+}
+
+// ==========================================================
+// 6a. KREIRANJE I IZMENA ARTIKLA / DELA / USLUGE U KATALOGU (SAVE_CATALOG_ITEM)
+// ==========================================================
+elseif ($action === 'save_catalog_item') {
+    $id = isset($inputData['id']) ? intval($inputData['id']) : 0;
+    $firma_id = isset($inputData['firma_id']) ? intval($inputData['firma_id']) : 1;
+    $sifra = isset($inputData['sifra']) ? trim($inputData['sifra']) : '';
+    $naziv = isset($inputData['naziv']) ? trim($inputData['naziv']) : '';
+    $tip = isset($inputData['tip']) && in_array($inputData['tip'], ['DEO', 'USLUGA', 'MATERIJAL']) ? $inputData['tip'] : 'DEO';
+    $jedinica_mere = isset($inputData['jedinica_mere']) ? trim($inputData['jedinica_mere']) : 'kom';
+    $cena = isset($inputData['cena']) ? floatval($inputData['cena']) : 0.00;
+    $kolicina_na_stanju = isset($inputData['kolicina_na_stanju']) ? floatval($inputData['kolicina_na_stanju']) : 100.00;
+
+    if (empty($naziv)) {
+        sendResponse('error', 'Naziv artikla / usluge je obavezan.', 400);
+    }
+
+    if ($id > 0) {
+        $stmt = $conn->prepare("
+            UPDATE katalog_delova_i_usluga
+            SET sifra = ?, naziv = ?, tip = ?, jedinica_mere = ?, cena = ?, kolicina_na_stanju = ?, aktivan = 1
+            WHERE id = ? AND (firma_id = ? OR firma_id = 1)
+        ");
+        $stmt->execute([$sifra, $naziv, $tip, $jedinica_mere, $cena, $kolicina_na_stanju, $id, $firma_id]);
+        $savedId = $id;
+    } else {
+        if (empty($sifra)) {
+            $prefix = ($tip === 'USLUGA') ? 'USL' : (($tip === 'MATERIJAL') ? 'MAT' : 'DEL');
+            $sifra = $prefix . '-' . rand(100, 999);
+        }
+        $stmt = $conn->prepare("
+            INSERT INTO katalog_delova_i_usluga (firma_id, sifra, naziv, tip, jedinica_mere, cena, kolicina_na_stanju, aktivan)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 1)
+        ");
+        $stmt->execute([$firma_id, $sifra, $naziv, $tip, $jedinica_mere, $cena, $kolicina_na_stanju]);
+        $savedId = $conn->lastInsertId();
+    }
+
+    $itemStmt = $conn->prepare("SELECT * FROM katalog_delova_i_usluga WHERE id = ?");
+    $itemStmt->execute([$savedId]);
+    $savedItem = $itemStmt->fetch();
+
+    sendResponse('success', $savedItem);
+}
+
+// ==========================================================
+// 6b. BRISANJE / DEAKTIVACIJA ARTIKLA IZ KATALOGA (DELETE_CATALOG_ITEM)
+// ==========================================================
+elseif ($action === 'delete_catalog_item') {
+    $id = isset($inputData['id']) ? intval($inputData['id']) : (isset($_GET['id']) ? intval($_GET['id']) : 0);
+    $firma_id = isset($inputData['firma_id']) ? intval($inputData['firma_id']) : (isset($_GET['firma_id']) ? intval($_GET['firma_id']) : 1);
+
+    if ($id <= 0) {
+        sendResponse('error', 'ID artikla je obavezan.', 400);
+    }
+
+    $stmt = $conn->prepare("UPDATE katalog_delova_i_usluga SET aktivan = 0 WHERE id = ?");
+    $stmt->execute([$id]);
+
+    sendResponse('success', ['id' => $id, 'poruka' => 'Artikal je uspešno uklonjen iz kataloga.']);
+}
+
+// ==========================================================
+// 6c. ČUVANJE STAVKI NALOGA U RADU (SAVE_ORDER_ITEMS)
+// ==========================================================
+elseif ($action === 'save_order_items') {
+    $order_id = isset($inputData['order_id']) ? intval($inputData['order_id']) : 0;
+    $stavke = isset($inputData['stavke']) && is_array($inputData['stavke']) ? $inputData['stavke'] : [];
+    $opis = isset($inputData['opis_izvrsenih_radova']) ? trim($inputData['opis_izvrsenih_radova']) : null;
+    $nacin_placanja = isset($inputData['nacin_placanja']) ? trim($inputData['nacin_placanja']) : null;
+
+    if ($order_id <= 0) {
+        sendResponse('error', 'ID radnog naloga je obavezan.', 400);
+    }
+
+    $conn->prepare("DELETE FROM nalozi_stavke WHERE nalog_id = ?")->execute([$order_id]);
+
+    $ukupnaCena = 0.00;
+    $insertItem = $conn->prepare("
+        INSERT INTO nalozi_stavke (nalog_id, katalog_id, naziv, jedinica_mere, kolicina, jedinicna_cena, ukupno) 
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    ");
+
+    foreach ($stavke as $st) {
+        $naziv = trim($st['naziv'] ?? 'Stavka');
+        $kolicina = floatval($st['kolicina'] ?? 1);
+        $cena = floatval($st['jedinicna_cena'] ?? 0);
+        $ukupno = round($kolicina * $cena, 2);
+        $ukupnaCena += $ukupno;
+
+        $insertItem->execute([
+            $order_id,
+            isset($st['katalog_id']) ? intval($st['katalog_id']) : null,
+            $naziv,
+            $st['jedinica_mere'] ?? 'kom',
+            $kolicina,
+            $cena,
+            $ukupno
+        ]);
+    }
+
+    $extraSql = "";
+    $params = [$ukupnaCena];
+    if ($opis !== null) {
+        $extraSql .= ", opis_izvrsenih_radova = ?";
+        $params[] = $opis;
+    }
+    if ($nacin_placanja !== null) {
+        $extraSql .= ", nacin_placanja = ?";
+        $params[] = $nacin_placanja;
+    }
+    $params[] = $order_id;
+
+    $conn->prepare("UPDATE radni_nalozi SET ukupna_cena = ? {$extraSql}, poslednja_promena = NOW() WHERE id = ?")->execute($params);
+
+    $stmtItems = $conn->prepare("SELECT * FROM nalozi_stavke WHERE nalog_id = ? ORDER BY id ASC");
+    $stmtItems->execute([$order_id]);
+    $newItems = $stmtItems->fetchAll();
+
+    sendResponse('success', [
+        'order_id' => $order_id,
+        'ukupna_cena' => $ukupnaCena,
+        'stavke' => $newItems
+    ]);
 }
 
 // ==========================================================

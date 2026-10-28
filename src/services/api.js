@@ -120,9 +120,37 @@ export const api = {
     });
   },
 
-  getCatalog: async (firmId, query = '') => {
-    const qStr = `firma_id=${encodeURIComponent(firmId)}${query ? `&q=${encodeURIComponent(query)}` : ''}`;
+  getCatalog: async (firmId, query = '', type = '') => {
+    let qStr = `firma_id=${encodeURIComponent(firmId)}`;
+    if (query) qStr += `&q=${encodeURIComponent(query)}`;
+    if (type) qStr += `&tip=${encodeURIComponent(type)}`;
     return request('get_catalog', { query: qStr });
+  },
+
+  saveCatalogItem: async (itemData) => {
+    return request('save_catalog_item', {
+      method: 'POST',
+      body: itemData
+    });
+  },
+
+  deleteCatalogItem: async (id, firmId) => {
+    return request('delete_catalog_item', {
+      method: 'POST',
+      body: { id, firma_id: firmId }
+    });
+  },
+
+  saveOrderItems: async (orderId, items, description = null, paymentMethod = null) => {
+    return request('save_order_items', {
+      method: 'POST',
+      body: {
+        order_id: orderId,
+        stavke: items,
+        opis_izvrsenih_radova: description,
+        nacin_placanja: paymentMethod
+      }
+    });
   },
 
   updateLocation: async (workerId, firmId, coords, status = 'NA_TERENU', orderId = null) => {
