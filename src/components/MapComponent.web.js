@@ -507,20 +507,24 @@ export default function MapComponent({
 
       let workerPos = null;
       if (selWorker) {
-        if (selWorker.gpsX && selWorker.gpsY) {
-          workerPos = [parseFloat(selWorker.gpsX), parseFloat(selWorker.gpsY)];
+        const isWorkerOnline = Number(selWorker.log_in_out) === 1;
+        const workerX = selWorker.x_koordinata || selWorker.gpsX;
+        const workerY = selWorker.y_koordinata || selWorker.gpsY;
+
+        if (isWorkerOnline && workerX && workerY && parseFloat(workerX) !== 0) {
+          workerPos = [parseFloat(workerX), parseFloat(workerY)];
           bounds.push(workerPos);
 
           const wColor = selWorker.boja_markera || '#059669';
           const wIconHtml = `<div style="background:${wColor};color:white;padding:5px 12px;border-radius:18px;border:2.5px solid white;box-shadow:0 4px 14px rgba(0,0,0,0.35);font-size:12px;font-weight:800;white-space:nowrap;display:flex;align-items:center;gap:4px;cursor:pointer;">`
-            + `<span>🚗</span><span>${selWorker.ime} ${selWorker.prezime || ''}</span>`
+            + `<span>🚗</span><span>${selWorker.ime} ${selWorker.prezime || ''} (Ulogovan)</span>`
             + `</div>`;
 
           const wm = L.marker(workerPos, {
-            icon: L.divIcon({ className: '', html: wIconHtml, iconSize: [140, 30], iconAnchor: [70, 15] })
+            icon: L.divIcon({ className: '', html: wIconHtml, iconSize: [160, 30], iconAnchor: [80, 15] })
           }).addTo(map);
 
-          wm.bindPopup(`<b>🚗 Majstor: ${selWorker.ime} ${selWorker.prezime || ''}</b><br>📞 ${selWorker.telefon || '-'}<br>Status: ${selWorker.radni_status || 'Aktivan'}`);
+          wm.bindPopup(`<b>🚗 Majstor: ${selWorker.ime} ${selWorker.prezime || ''}</b><br>🟢 Status: <b>Ulogovan na terenu</b><br>📞 ${selWorker.telefon || '-'}`);
           markersRef.current['selected_worker'] = wm;
         }
 

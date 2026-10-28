@@ -870,7 +870,7 @@ export default function DispatcherScreen({ onBackToWorker, onSelectOrder }) {
                               )}
                             </View>
                             <Text style={styles.mapDropdownSelectedSub}>
-                              📞 {currentWorker.telefon || '-'} • Status: {currentWorker.radni_status || 'SLOBODAN'}{currentWorker.gpsX ? ' • 🛰️ GPS aktivan' : ' • ⚠️ GPS nije evidentiran'}
+                              📞 {currentWorker.telefon || '-'} • Status: {Number(currentWorker.log_in_out) === 1 ? '🟢 Ulogovan' : '⚪ Odjavljen'}{Boolean(currentWorker.x_koordinata || currentWorker.gpsX) ? ' • 🛰️ GPS aktivan' : ' • ⚠️ Nema GPS'}
                             </Text>
                           </View>
                         </View>
@@ -929,7 +929,7 @@ export default function DispatcherScreen({ onBackToWorker, onSelectOrder }) {
                                   </Text>
                                 </View>
                                 <Text style={styles.workerSelectSub}>
-                                  📞 {w.telefon || '-'} • Status: {w.radni_status || 'SLOBODAN'}{inProgressCount > 0 ? ` • ${inProgressCount} u toku` : ''}{w.gpsX ? ' • 🛰️ GPS aktivan' : ' • ⚠️ Nema GPS'}
+                                  📞 {w.telefon || '-'} • {Number(w.log_in_out) === 1 ? '🟢 Ulogovan' : '⚪ Odjavljen'}{inProgressCount > 0 ? ` • ${inProgressCount} u toku` : ''}{Boolean(w.x_koordinata || w.gpsX) ? ' • 🛰️ GPS aktivan' : ' • ⚠️ Nema GPS'}
                                 </Text>
                               </View>
                               {isSel && <Check size={16} color="#0284C7" />}

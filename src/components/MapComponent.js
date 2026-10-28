@@ -350,20 +350,24 @@ const getMapHtml = () => `
 
         var workerPos = null;
         if (selWorker) {
-          if (selWorker.gpsX && selWorker.gpsY) {
-            workerPos = [parseFloat(selWorker.gpsX), parseFloat(selWorker.gpsY)];
+          var isWorkerOnline = Number(selWorker.log_in_out) === 1;
+          var workerX = selWorker.x_koordinata || selWorker.gpsX;
+          var workerY = selWorker.y_koordinata || selWorker.gpsY;
+
+          if (isWorkerOnline && workerX && workerY && parseFloat(workerX) !== 0) {
+            workerPos = [parseFloat(workerX), parseFloat(workerY)];
             bounds.push(workerPos);
 
             var wColor = selWorker.boja_markera || '#059669';
             var wIconHtml = '<div style="background:' + wColor + ';color:white;padding:5px 12px;border-radius:18px;border:2.5px solid white;box-shadow:0 4px 14px rgba(0,0,0,0.35);font-size:12px;font-weight:800;white-space:nowrap;display:flex;align-items:center;gap:4px;">'
-              + '<span>🚗</span><span>' + selWorker.ime + (selWorker.prezime ? ' ' + selWorker.prezime : '') + '</span>'
+              + '<span>🚗</span><span>' + selWorker.ime + (selWorker.prezime ? ' ' + selWorker.prezime : '') + ' (Ulogovan)</span>'
               + '</div>';
 
             var wm = L.marker(workerPos, {
-              icon: L.divIcon({ html: wIconHtml, iconSize: [140, 30], iconAnchor: [70, 15] })
+              icon: L.divIcon({ html: wIconHtml, iconSize: [160, 30], iconAnchor: [80, 15] })
             }).addTo(map);
 
-            wm.bindPopup('<b>🚗 Majstor: ' + selWorker.ime + ' ' + (selWorker.prezime || '') + '</b><br>📞 ' + (selWorker.telefon || '-') + '<br>Status: ' + (selWorker.radni_status || 'Aktivan'));
+            wm.bindPopup('<b>🚗 Majstor: ' + selWorker.ime + ' ' + (selWorker.prezime || '') + '</b><br>🟢 Status: <b>Ulogovan na terenu</b><br>📞 ' + (selWorker.telefon || '-'));
             markers['selected_worker'] = wm;
           }
 

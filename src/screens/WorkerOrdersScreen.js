@@ -55,15 +55,34 @@ export default function WorkerOrdersScreen({ onSelectOrder }) {
   const [focusedOrder, setFocusedOrder] = useState(null);
   const [mapExpanded, setMapExpanded] = useState(true);
 
-  // Preuzimanje GPS lokacije majstora (pregledač / mobilni uređaj)
+  // Preuzimanje i slanje GPS lokacije majstora na server
   useEffect(() => {
+    if (!user?.id) return;
     if (typeof navigator !== 'undefined' && navigator.geolocation) {
+      let lastSent = 0;
       const handlePos = (pos) => {
+        if (!pos || !pos.coords) return;
+        const lat = pos.coords.latitude;
+        const lng = pos.coords.longitude;
         setMyLocation({
-          lat: pos.coords.latitude,
-          lng: pos.coords.longitude,
+          lat,
+          lng,
           name: `${user?.ime || 'Majstor'} (Moja lokacija)`
         });
+
+        const now = Date.now();
+        if (now - lastSent >= 10000) {
+          lastSent = now;
+          api.updateLocation(user.id, user.firma_id, {
+            x_koordinata: lat,
+            y_koordinata: lng,
+            lat,
+            lng,
+            speed: pos.coords.speed || 0,
+            heading: pos.coords.heading || 0,
+            log_in_out: 1
+          }).catch(() => {});
+        }
       };
 
       navigator.geolocation.getCurrentPosition(handlePos, () => {}, {
@@ -73,13 +92,13 @@ export default function WorkerOrdersScreen({ onSelectOrder }) {
 
       const watchId = navigator.geolocation.watchPosition(handlePos, () => {}, {
         enableHighAccuracy: true,
-        maximumAge: 10000,
+        maximumAge: 5000,
         timeout: 15000
       });
 
       return () => navigator.geolocation.clearWatch(watchId);
     }
-  }, [user?.ime]);
+  }, [user?.id, user?.firma_id, user?.ime]);
 
   const fetchOrders = useCallback(async () => {
     if (!user?.id) return;

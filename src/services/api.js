@@ -154,19 +154,31 @@ export const api = {
   },
 
   updateLocation: async (workerId, firmId, coords, status = 'NA_TERENU', orderId = null) => {
+    const lat = coords.latitude || coords.lat || coords.x_koordinata;
+    const lng = coords.longitude || coords.lng || coords.y_koordinata;
     return request('update_location', {
       method: 'POST',
       body: {
         majstor_id: workerId,
         firma_id: firmId,
-        gpsX: coords.latitude || coords.lat,
-        gpsY: coords.longitude || coords.lng,
+        x_koordinata: lat,
+        y_koordinata: lng,
+        gpsX: lat,
+        gpsY: lng,
         brzina: coords.speed || 0,
         kurs: coords.heading || 0,
         baterija: coords.battery || null,
+        log_in_out: 1,
         status,
         nalog_id: orderId
       }
+    });
+  },
+
+  logout: async (userId) => {
+    return request('logout', {
+      method: 'POST',
+      body: { user_id: userId }
     });
   },
 

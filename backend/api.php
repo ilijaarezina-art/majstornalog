@@ -204,7 +204,7 @@ try {
     $conn->exec("UPDATE korisnici SET rola_id = 3 WHERE rola_id IS NULL OR rola_id NOT IN (1, 2, 3)");
     $conn->exec("UPDATE korisnici SET lozinka_tekst = 'majstor123' WHERE lozinka_tekst IS NULL OR lozinka_tekst = ''");
 
-    // Proširenje tabele majstori_lokacija: poslednje_azuriranje ako nedostaje
+    // Proširenje tabele majstori_lokacija: log_in_out, x_koordinata, y_koordinata, poslednje_azuriranje
     $colsMl = $conn->query("SHOW COLUMNS FROM majstori_lokacija")->fetchAll(PDO::FETCH_COLUMN);
     if (!in_array('poslednje_azuriranje', $colsMl)) {
         if (in_array('poslednja_promena', $colsMl)) {
@@ -212,6 +212,15 @@ try {
         } else {
             $conn->exec("ALTER TABLE majstori_lokacija ADD COLUMN `poslednje_azuriranje` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp()");
         }
+    }
+    if (!in_array('log_in_out', $colsMl)) {
+        $conn->exec("ALTER TABLE majstori_lokacija ADD COLUMN `log_in_out` tinyint(1) NOT NULL DEFAULT 0 AFTER `status`");
+    }
+    if (!in_array('x_koordinata', $colsMl)) {
+        $conn->exec("ALTER TABLE majstori_lokacija ADD COLUMN `x_koordinata` double DEFAULT NULL AFTER `gpsY`");
+    }
+    if (!in_array('y_koordinata', $colsMl)) {
+        $conn->exec("ALTER TABLE majstori_lokacija ADD COLUMN `y_koordinata` double DEFAULT NULL AFTER `x_koordinata`");
     }
 
     // 9. Samozaceljujuća migracija za katalog delova i stavke naloga
@@ -337,6 +346,17 @@ if ($action === 'login') {
             $user['status_pretplate'] = 'AKTIVAN';
         }
 
+        // Evidentiraj u tabeli majstori_lokacija da je majstor logovan (log_in_out = 1)
+        if (!empty($user['firma_id']) && (intval($user['rola_id'] ?? 0) === 3 || in_array($user['rola'] ?? '', ['majstor', 'radnik', 'korisnik']))) {
+            try {
+                $conn->prepare("
+                    INSERT INTO majstori_lokacija (majstor_id, firma_id, log_in_out, poslednje_azuriranje)
+                    VALUES (?, ?, 1, NOW())
+                    ON DUPLICATE KEY UPDATE log_in_out = 1, poslednje_azuriranje = NOW()
+                ")->execute([$user['id'], $user['firma_id']]);
+            } catch (Exception $mlLoginEx) {}
+        }
+
         unset($user['lozinka']);
         sendResponse('success', [
             "token" => bin2hex(random_bytes(24)),
@@ -345,6 +365,19 @@ if ($action === 'login') {
     } else {
         sendResponse('error', 'Pogrešan email ili lozinka.', 401);
     }
+}
+
+// ==========================================================
+// ODJAVA MAJSTORA (LOGOUT -> log_in_out = 0)
+// ==========================================================
+elseif ($action === 'logout') {
+    $user_id = isset($inputData['user_id']) ? intval($inputData['user_id']) : (isset($_GET['user_id']) ? intval($_GET['user_id']) : 0);
+    if ($user_id > 0) {
+        try {
+            $conn->prepare("UPDATE majstori_lokacija SET log_in_out = 0, poslednje_azuriranje = NOW() WHERE majstor_id = ?")->execute([$user_id]);
+        } catch (Exception $mlLogoutEx) {}
+    }
+    sendResponse('success', ["logged_out" => true]);
 }
 
 // ==========================================================
@@ -1002,31 +1035,40 @@ elseif ($action === 'save_order_items') {
 // ==========================================================
 elseif ($action === 'update_location') {
     $majstor_id = isset($inputData['majstor_id']) ? intval($inputData['majstor_id']) : 0;
-    $firma_id = isset($inputData['firma_id']) ? intval($inputData['firma_id']) : 1;
-    $gpsX = isset($inputData['gpsX']) ? floatval($inputData['gpsX']) : 0.0;
-    $gpsY = isset($inputData['gpsY']) ? floatval($inputData['gpsY']) : 0.0;
-    $brzina = isset($inputData['brzina']) ? floatval($inputData['brzina']) : 0.0;
-    $kurs = isset($inputData['kurs']) ? floatval($inputData['kurs']) : 0.0;
+    $firma_id = isset($inputData['firma_id']) ? intval($inputData['firma_id']) : 0;
+    
+    // x_koordinata i y_koordinata sa telefona majstora (podrska za razlicite nazive polja)
+    $x_koordinata = isset($inputData['x_koordinata']) && $inputData['x_koordinata'] !== '' ? floatval($inputData['x_koordinata']) : (isset($inputData['gpsX']) && $inputData['gpsX'] !== '' ? floatval($inputData['gpsX']) : (isset($inputData['lat']) ? floatval($inputData['lat']) : null));
+    $y_koordinata = isset($inputData['y_koordinata']) && $inputData['y_koordinata'] !== '' ? floatval($inputData['y_koordinata']) : (isset($inputData['gpsY']) && $inputData['gpsY'] !== '' ? floatval($inputData['gpsY']) : (isset($inputData['lng']) ? floatval($inputData['lng']) : null));
+    
+    $gpsX = $x_koordinata;
+    $gpsY = $y_koordinata;
+    $brzina = isset($inputData['brzina']) ? floatval($inputData['brzina']) : (isset($inputData['speed']) ? floatval($inputData['speed']) : 0.0);
+    $kurs = isset($inputData['kurs']) ? floatval($inputData['kurs']) : (isset($inputData['heading']) ? floatval($inputData['heading']) : 0.0);
     $status = isset($inputData['status']) ? trim($inputData['status']) : 'NA_TERENU';
     $nalog_id = isset($inputData['nalog_id']) ? intval($inputData['nalog_id']) : null;
+    $log_in_out = isset($inputData['log_in_out']) ? intval($inputData['log_in_out']) : 1;
 
-    if ($majstor_id <= 0 || empty($gpsX) || empty($gpsY)) {
+    if ($majstor_id <= 0 || $x_koordinata === null || $y_koordinata === null || $x_koordinata == 0) {
         sendResponse('error', 'Nevalidni podaci za lokaciju.', 400);
     }
 
     $stmt = $conn->prepare("
-        INSERT INTO majstori_lokacija (majstor_id, firma_id, gpsX, gpsY, brzina, kurs, status, trenutni_nalog_id, poslednje_azuriranje)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())
+        INSERT INTO majstori_lokacija (majstor_id, firma_id, x_koordinata, y_koordinata, gpsX, gpsY, brzina, kurs, status, trenutni_nalog_id, log_in_out, poslednje_azuriranje)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
         ON DUPLICATE KEY UPDATE
+            x_koordinata = VALUES(x_koordinata),
+            y_koordinata = VALUES(y_koordinata),
             gpsX = VALUES(gpsX),
             gpsY = VALUES(gpsY),
             brzina = VALUES(brzina),
             kurs = VALUES(kurs),
             status = VALUES(status),
             trenutni_nalog_id = VALUES(trenutni_nalog_id),
+            log_in_out = VALUES(log_in_out),
             poslednje_azuriranje = NOW()
     ");
-    $stmt->execute([$majstor_id, $firma_id, $gpsX, $gpsY, $brzina, $kurs, $status, $nalog_id]);
+    $stmt->execute([$majstor_id, $firma_id, $x_koordinata, $y_koordinata, $gpsX, $gpsY, $brzina, $kurs, $status, $nalog_id, $log_in_out]);
 
     sendResponse('success', ["recorded" => true]);
 }
@@ -1042,12 +1084,16 @@ elseif ($action === 'get_dispatcher_dashboard') {
     // 1. Majstori i njihova trenutna pozicija (svi aktivni radnici ovog servisa)
     $stmtWorkers = $conn->prepare("
         SELECT k.id, k.ime, k.prezime, k.telefon, k.email, k.lozinka_tekst, k.boja_markera,
-               NULLIF(ml.gpsX, 0) as gpsX,
-               NULLIF(ml.gpsY, 0) as gpsY,
+               COALESCE(ml.log_in_out, 0) as log_in_out,
+               CASE WHEN ml.log_in_out = 1 THEN COALESCE(NULLIF(ml.x_koordinata, 0), NULLIF(ml.gpsX, 0)) ELSE NULL END as x_koordinata,
+               CASE WHEN ml.log_in_out = 1 THEN COALESCE(NULLIF(ml.y_koordinata, 0), NULLIF(ml.gpsY, 0)) ELSE NULL END as y_koordinata,
+               CASE WHEN ml.log_in_out = 1 THEN COALESCE(NULLIF(ml.x_koordinata, 0), NULLIF(ml.gpsX, 0)) ELSE NULL END as gpsX,
+               CASE WHEN ml.log_in_out = 1 THEN COALESCE(NULLIF(ml.y_koordinata, 0), NULLIF(ml.gpsY, 0)) ELSE NULL END as gpsY,
                COALESCE(ml.brzina, 0) as brzina,
                COALESCE(ml.kurs, 0) as kurs,
                COALESCE(ml.status, 'SLOBODAN') as radni_status,
-               ml.trenutni_nalog_id
+               ml.trenutni_nalog_id,
+               ml.poslednje_azuriranje
         FROM korisnici k
         LEFT JOIN majstori_lokacija ml ON k.id = ml.majstor_id
         WHERE k.firma_id = ? 
@@ -1472,8 +1518,8 @@ elseif ($action === 'save_user') {
                 $chkMl->execute([$newId]);
                 if (!$chkMl->fetch()) {
                     $conn->prepare("
-                        INSERT INTO majstori_lokacija (majstor_id, firma_id, gpsX, gpsY, brzina, kurs, status, poslednje_azuriranje)
-                        VALUES (?, ?, NULL, NULL, 0, 0, 'SLOBODAN', NOW())
+                        INSERT INTO majstori_lokacija (majstor_id, firma_id, x_koordinata, y_koordinata, gpsX, gpsY, brzina, kurs, status, log_in_out, poslednje_azuriranje)
+                        VALUES (?, ?, NULL, NULL, NULL, NULL, 0, 0, 'SLOBODAN', 0, NOW())
                     ")->execute([$newId, $firma_id]);
                 }
             } catch (Exception $mlEx) {

@@ -9,6 +9,7 @@ import WorkerOrdersScreen from './src/screens/WorkerOrdersScreen';
 import OrderDetailScreen from './src/screens/OrderDetailScreen';
 import DispatcherScreen from './src/screens/DispatcherScreen';
 import SuperAdminScreen from './src/screens/SuperAdminScreen';
+import { api } from './src/services/api';
 import { colors } from './src/theme/colors';
 
 function MainNavigator() {
@@ -18,7 +19,7 @@ function MainNavigator() {
 
   const isManagement = isSuperAdmin || isDispatcher || isOwner || isAdmin;
 
-  // Automatski podesi početni ekran prema ulozi (potpuno odvojene forme za admina/dispečera i majstora)
+    // Automatski podesi početni ekran prema ulozi (potpuno odvojene forme za admina/dispečera i majstora)
   useEffect(() => {
     if (user) {
       if (isSuperAdmin) {
@@ -30,6 +31,55 @@ function MainNavigator() {
       }
     }
   }, [user?.id, isSuperAdmin, isManagement]);
+
+  // Automatsko GPS praćenje i upis telefona majstora u tabelu majstori_lokacija kada je ulogovan
+  useEffect(() => {
+    if (!user?.id || isManagement) return;
+    if (typeof navigator === 'undefined' || !navigator.geolocation) return;
+
+    let lastSent = 0;
+    const sendTelemetry = (pos) => {
+      if (!pos || !pos.coords) return;
+      const lat = pos.coords.latitude;
+      const lng = pos.coords.longitude;
+      const speed = pos.coords.speed || 0;
+      const heading = pos.coords.heading || 0;
+      const now = Date.now();
+
+      // Slanje u bazu na svakih 10 sekundi
+      if (now - lastSent >= 10000) {
+        lastSent = now;
+        api.updateLocation(user.id, user.firma_id, {
+          x_koordinata: lat,
+          y_koordinata: lng,
+          lat,
+          lng,
+          speed,
+          heading,
+          log_in_out: 1
+        }).catch(err => {
+          console.warn('GPS slanje:', err.message);
+        });
+      }
+    };
+
+    navigator.geolocation.getCurrentPosition(sendTelemetry, () => {}, {
+      enableHighAccuracy: true,
+      timeout: 10000
+    });
+
+    const watchId = navigator.geolocation.watchPosition(sendTelemetry, () => {}, {
+      enableHighAccuracy: true,
+      maximumAge: 5000,
+      timeout: 15000
+    });
+
+    return () => {
+      if (typeof navigator !== 'undefined' && navigator.geolocation) {
+        navigator.geolocation.clearWatch(watchId);
+      }
+    };
+  }, [user?.id, user?.firma_id, isManagement]);
 
   if (loading) {
     return (

@@ -38,6 +38,11 @@ export const AuthProvider = ({ children }) => {
   };
 
   const logout = async () => {
+    if (user?.id) {
+      try {
+        await api.logout(user.id);
+      } catch (e) {}
+    }
     setUser(null);
     setToken(null);
     await AsyncStorage.removeItem('@majstornalog:user');
