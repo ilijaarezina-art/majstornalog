@@ -331,14 +331,18 @@ const getMapHtml = () => `
       } else {
         // Dispečerski pregled terena
         // -------------------------------------------------------------
-        // A) AKO JE ODABRAN ODREĐENI MAJSTOR: Prikaz lokacije majstora i SVIH njegovih dolaznih lokacija za taj dan
+        // ISKLJUČIVO PRIKAZ ODABRANOG MAJSTORA I SVIH NJEGOVIH DOLAZNIH LOKACIJA (Bez prikaza svih majstora odjednom)
         // -------------------------------------------------------------
-        if (payload.selectedWorkerId || payload.selectedWorker) {
-          var selId = payload.selectedWorkerId ? Number(payload.selectedWorkerId) : (payload.selectedWorker ? Number(payload.selectedWorker.id) : 0);
-          var selWorker = payload.selectedWorker || (payload.workers || []).find(function(w) { return Number(w.id) === selId; });
+        var selId = payload.selectedWorkerId ? Number(payload.selectedWorkerId) : (payload.selectedWorker ? Number(payload.selectedWorker.id) : 0);
+        var selWorker = (payload.workers || []).find(function(w) { return Number(w.id) === selId; });
+        if (!selWorker && payload.workers && payload.workers.length > 0) {
+          selWorker = payload.workers[0];
+          selId = Number(selWorker.id);
+        }
 
-          var workerPos = null;
-          if (selWorker && selWorker.gpsX && selWorker.gpsY) {
+        var workerPos = null;
+        if (selWorker) {
+          if (selWorker.gpsX && selWorker.gpsY) {
             workerPos = [parseFloat(selWorker.gpsX), parseFloat(selWorker.gpsY)];
             bounds.push(workerPos);
 
@@ -461,46 +465,6 @@ const getMapHtml = () => `
                 routeLine = L.polyline(coords, { color: '#0284C7', weight: 5, opacity: 0.9 }).addTo(map);
               }
             }).catch(function(){});
-          }
-        } else {
-          // -------------------------------------------------------------
-          // B) GLOBALNI PREGLED SVIH MAJSTORA NA TERENU
-          // -------------------------------------------------------------
-          (payload.workers || []).forEach(function(w) {
-            var isFree = !w.radni_status || w.radni_status === 'SLOBODAN' || w.radni_status === 'NEAKTIVAN';
-            if (w.gpsX && w.gpsY && !isFree) {
-              var pos = [parseFloat(w.gpsX), parseFloat(w.gpsY)];
-              bounds.push(pos);
-
-              var wOrderCount = (payload.orders || []).filter(function(o) { return Number(o.majstor_id) === Number(w.id); }).length;
-
-              var icon = L.divIcon({
-                html: '<div style="background:' + (w.boja_markera || '#059669') + ';color:white;padding:3px 8px;border-radius:12px;border:2px solid white;box-shadow:0 2px 6px rgba(0,0,0,0.3);font-size:11px;font-weight:700;white-space:nowrap;cursor:pointer;">🚗 ' + w.ime + (wOrderCount > 0 ? ' (' + wOrderCount + ')' : '') + '</div>',
-                iconSize: [95, 26],
-                iconAnchor: [47, 13]
-              });
-
-              var wm = L.marker(pos, { icon: icon }).addTo(map);
-              var wPopup = '<div style="font-family:sans-serif;padding:3px;min-width:180px;">'
-                + '<b>🚗 Majstor: ' + w.ime + (w.prezime ? ' ' + w.prezime : '') + '</b><br>'
-                + '📞 ' + (w.telefon || '-') + '<br>'
-                + 'Naloga danas: <b>' + wOrderCount + '</b><br>'
-                + '<button onclick="window.parentSelectWorker(' + w.id + ')" style="margin-top:6px;width:100%;padding:6px 0;background:#0284C7;color:white;border:none;border-radius:6px;font-size:11px;font-weight:700;cursor:pointer;">Prikaži sve dolazne lokacije ↗</button>'
-                + '</div>';
-              wm.bindPopup(wPopup);
-              markers['w_' + w.id] = wm;
-            }
-          });
-
-          if (payload.workerLocation && payload.workerLocation.lat) {
-            var uPos = [parseFloat(payload.workerLocation.lat), parseFloat(payload.workerLocation.lng)];
-            bounds.push(uPos);
-            var uIcon = L.divIcon({
-              html: '<div style="background:#0284C7;color:white;width:34px;height:34px;border-radius:50%;border:2.5px solid white;display:flex;align-items:center;justify-content:center;box-shadow:0 3px 8px rgba(0,0,0,0.4);font-size:16px;">🏢</div>',
-              iconSize: [34, 34],
-              iconAnchor: [17, 17]
-            });
-            markers['dispatcher_me'] = L.marker(uPos, { icon: uIcon }).addTo(map);
           }
         }
       }

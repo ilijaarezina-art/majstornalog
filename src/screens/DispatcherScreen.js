@@ -235,8 +235,20 @@ export default function DispatcherScreen({ onBackToWorker, onSelectOrder }) {
   const [workers, setWorkers] = useState([]);
   const [orders, setOrders] = useState([]);
 
-  // Odabrani majstor za prikaz njegove lokacije i svih njegovih dolazaka na mapi
+  // Odabrani majstor za prikaz njegove lokacije i svih njegovih dolazaka na mapi (isključivo preko padajućeg menija)
   const [selectedWorkerId, setSelectedWorkerId] = useState(null);
+  const [isMapWorkerDropdownOpen, setIsMapWorkerDropdownOpen] = useState(false);
+
+  // Automatsko postavljanje majstora (nikada nema stanja "Svi majstori" kako se ne bi pravio haos na mapi)
+  useEffect(() => {
+    if (workers && workers.length > 0) {
+      setSelectedWorkerId(prev => {
+        if (prev && workers.some(w => Number(w.id) === Number(prev))) return prev;
+        const workerWithOrders = workers.find(w => orders.some(o => Number(o.majstor_id) === Number(w.id)));
+        return workerWithOrders ? workerWithOrders.id : workers[0].id;
+      });
+    }
+  }, [workers, orders]);
 
   // Fokusirani nalog za prikaz rute i dolazne lokacije na mapi
   const [focusedOrder, setFocusedOrder] = useState(null);
@@ -814,70 +826,119 @@ export default function DispatcherScreen({ onBackToWorker, onSelectOrder }) {
                 </View>
               </View>
 
-              {/* Traka za selekciju majstora na mapi */}
-              <View style={styles.workerFilterBar}>
-                <Text style={styles.workerFilterLabel}>Odabir majstora:</Text>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6, alignItems: 'center' }}>
-                  <TouchableOpacity
-                    style={[styles.workerChip, !selectedWorkerId && styles.workerChipActive]}
-                    onPress={() => setSelectedWorkerId(null)}
-                    activeOpacity={0.8}
-                  >
-                    <Text style={[styles.workerChipText, !selectedWorkerId && styles.workerChipTextActive]}>
-                      Svi majstori ({workers.length})
-                    </Text>
-                  </TouchableOpacity>
-
-                  {workers.map(w => {
-                    const wOrderCount = orders.filter(o => Number(o.majstor_id) === Number(w.id)).length;
-                    const isSelected = Number(selectedWorkerId) === Number(w.id);
-                    return (
-                      <TouchableOpacity
-                        key={w.id}
-                        style={[
-                          styles.workerChip,
-                          isSelected && styles.workerChipActive,
-                          isSelected && { borderColor: w.boja_markera || '#059669' }
-                        ]}
-                        onPress={() => setSelectedWorkerId(isSelected ? null : w.id)}
-                        activeOpacity={0.8}
-                      >
-                        <View style={[styles.workerChipDot, { backgroundColor: w.boja_markera || '#059669' }]} />
-                        <Text style={[styles.workerChipText, isSelected && styles.workerChipTextActive]}>
-                          {w.ime} {w.prezime || ''} ({wOrderCount})
-                        </Text>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </ScrollView>
-              </View>
-
-              {/* Baner kada je odabran konkretan majstor */}
-              {selectedWorkerId && (
-                <View style={styles.selectedWorkerBanner}>
-                  <View style={{ flex: 1, paddingRight: 8 }}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                      <Truck size={15} color="#059669" />
-                      <Text style={styles.selectedWorkerBannerTitle}>
-                        Prikaz terena za: <Text style={{ color: '#0F172A', fontWeight: '900' }}>
-                          {workers.find(w => Number(w.id) === Number(selectedWorkerId))?.ime} {workers.find(w => Number(w.id) === Number(selectedWorkerId))?.prezime || ''}
-                        </Text>
-                      </Text>
-                    </View>
-                    <Text style={styles.selectedWorkerBannerSub}>
-                      📍 Prikazane sve dolazne lokacije klijenata za odabrani dan ({orders.filter(o => Number(o.majstor_id) === Number(selectedWorkerId)).length} naloga) i trenutna lokacija majstora
-                    </Text>
+              {/* Padajući meni za odabir majstora na mapi (isključivo pojedinačni majstori - bez opcije Svi majstori) */}
+              <View style={styles.mapDropdownContainer}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <Truck size={15} color="#0284C7" />
+                    <Text style={styles.mapDropdownHeaderLabel}>Izbor majstora za prikaz terena:</Text>
                   </View>
-                  <TouchableOpacity
-                    style={styles.selectedWorkerClearBtn}
-                    onPress={() => setSelectedWorkerId(null)}
-                    activeOpacity={0.7}
-                  >
-                    <X size={14} color="#DC2626" style={{ marginRight: 4 }} />
-                    <Text style={styles.selectedWorkerClearBtnText}>Svi majstori</Text>
-                  </TouchableOpacity>
+                  <Text style={styles.mapDropdownSubHint}>
+                    (Prikaz lokacije majstora i svih njegovih adresa dolaska)
+                  </Text>
                 </View>
-              )}
+
+                {/* Trigger padajućeg menija */}
+                <TouchableOpacity
+                  style={[
+                    styles.mapDropdownTrigger,
+                    isMapWorkerDropdownOpen && styles.mapDropdownTriggerActive
+                  ]}
+                  onPress={() => setIsMapWorkerDropdownOpen(prev => !prev)}
+                  activeOpacity={0.8}
+                >
+                  {(() => {
+                    const currentWorker = workers.find(w => Number(w.id) === Number(selectedWorkerId)) || workers[0];
+                    if (currentWorker) {
+                      const wOrders = orders.filter(o => Number(o.majstor_id) === Number(currentWorker.id));
+                      const inProgressCount = wOrders.filter(o => ['PRIHVACENO', 'NA_PUTU', 'U_RADU'].includes(o.status)).length;
+                      return (
+                        <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, gap: 10 }}>
+                          <View style={[styles.workerSelectDot, { backgroundColor: currentWorker.boja_markera || '#059669', width: 12, height: 12, borderRadius: 6 }]} />
+                          <View style={{ flex: 1 }}>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                              <Text style={styles.mapDropdownSelectedName}>
+                                {currentWorker.ime} {currentWorker.prezime || ''}
+                              </Text>
+                              <View style={styles.mapDropdownBadge}>
+                                <Text style={styles.mapDropdownBadgeText}>{wOrders.length} naloga za danas</Text>
+                              </View>
+                              {inProgressCount > 0 && (
+                                <View style={[styles.mapDropdownBadge, { backgroundColor: '#FEF3C7', borderColor: '#FDE68A' }]}>
+                                  <Text style={[styles.mapDropdownBadgeText, { color: '#B45309' }]}>🔥 {inProgressCount} u toku</Text>
+                                </View>
+                              )}
+                            </View>
+                            <Text style={styles.mapDropdownSelectedSub}>
+                              📞 {currentWorker.telefon || '-'} • Status: {currentWorker.radni_status || 'SLOBODAN'}
+                            </Text>
+                          </View>
+                        </View>
+                      );
+                    }
+                    return (
+                      <Text style={{ fontSize: 13, color: '#64748B', fontWeight: '600' }}>
+                        Učitavanje majstora...
+                      </Text>
+                    );
+                  })()}
+                  <ChevronDown
+                    size={18}
+                    color="#64748B"
+                    style={{ transform: [{ rotate: isMapWorkerDropdownOpen ? '180deg' : '0deg' }] }}
+                  />
+                </TouchableOpacity>
+
+                {/* Otvorena lista padajućeg menija */}
+                {isMapWorkerDropdownOpen && (
+                  <View style={styles.mapDropdownMenu}>
+                    <ScrollView style={{ maxHeight: 220 }} nestedScrollEnabled>
+                      {workers.length === 0 ? (
+                        <View style={{ padding: 12, alignItems: 'center' }}>
+                          <Text style={{ fontSize: 12, color: '#64748B' }}>Nema evidentiranih majstora za ovaj servis.</Text>
+                        </View>
+                      ) : (
+                        workers.map(w => {
+                          const isSel = Number(selectedWorkerId) === Number(w.id);
+                          const wOrders = orders.filter(o => Number(o.majstor_id) === Number(w.id));
+                          const inProgressCount = wOrders.filter(o => ['PRIHVACENO', 'NA_PUTU', 'U_RADU'].includes(o.status)).length;
+                          return (
+                            <TouchableOpacity
+                              key={w.id}
+                              style={[
+                                styles.mapDropdownItem,
+                                isSel && styles.mapDropdownItemActive
+                              ]}
+                              onPress={() => {
+                                setSelectedWorkerId(w.id);
+                                setIsMapWorkerDropdownOpen(false);
+                              }}
+                              activeOpacity={0.8}
+                            >
+                              <View style={[styles.workerSelectDot, { backgroundColor: w.boja_markera || '#059669' }]} />
+                              <View style={{ flex: 1 }}>
+                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                                  <Text style={[styles.workerSelectName, isSel && { color: '#0284C7', fontWeight: '800' }]}>
+                                    {w.ime} {w.prezime || ''}
+                                  </Text>
+                                  <Text style={{ fontSize: 11, color: '#64748B', fontWeight: '700' }}>
+                                    ({wOrders.length} naloga danas)
+                                  </Text>
+                                </View>
+                                <Text style={styles.workerSelectSub}>
+                                  📞 {w.telefon || '-'} • Status: {w.radni_status || 'SLOBODAN'}
+                                  {inProgressCount > 0 ? ` • ${inProgressCount} u toku` : ''}
+                                </Text>
+                              </View>
+                              {isSel && <Check size={16} color="#0284C7" />}
+                            </TouchableOpacity>
+                          );
+                        })
+                      )}
+                    </ScrollView>
+                  </View>
+                )}
+              </View>
 
               {focusedOrder && (
                 <View style={styles.mapFocusBanner}>
@@ -1004,13 +1065,13 @@ export default function DispatcherScreen({ onBackToWorker, onSelectOrder }) {
                               ]}
                               onPress={(e) => {
                                 e?.stopPropagation?.();
-                                setSelectedWorkerId(prev => Number(prev) === Number(fo.majstor_id) ? null : fo.majstor_id);
+                                setSelectedWorkerId(fo.majstor_id);
                               }}
                               activeOpacity={0.7}
                             >
                               <Truck size={12} color={Number(selectedWorkerId) === Number(fo.majstor_id) ? '#FFFFFF' : '#059669'} style={{ marginRight: 4 }} />
                               <Text style={[styles.showAllWorkerOrdersBtnText, Number(selectedWorkerId) === Number(fo.majstor_id) && { color: '#FFFFFF' }]}>
-                                {Number(selectedWorkerId) === Number(fo.majstor_id) ? 'Svi majstori' : 'Sve lokacije majstora'}
+                                {Number(selectedWorkerId) === Number(fo.majstor_id) ? 'Prikazan na mapi' : 'Prikaži na mapi'}
                               </Text>
                             </TouchableOpacity>
                           ) : null}
@@ -3212,83 +3273,92 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: '#FFFFFF'
   },
-  workerFilterBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
+  mapDropdownContainer: {
     backgroundColor: '#F8FAFC',
     paddingHorizontal: 12,
-    paddingVertical: 8,
+    paddingVertical: 10,
     borderBottomWidth: 1,
     borderBottomColor: '#E2E8F0',
-    gap: 8
+    zIndex: 40
   },
-  workerFilterLabel: {
-    fontSize: 11.5,
-    fontWeight: '700',
-    color: '#64748B'
-  },
-  workerChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#CBD5E1',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 20
-  },
-  workerChipActive: {
-    backgroundColor: '#0F172A',
-    borderColor: '#0F172A'
-  },
-  workerChipText: {
-    fontSize: 11.5,
-    fontWeight: '700',
-    color: '#334155'
-  },
-  workerChipTextActive: {
-    color: '#FFFFFF'
-  },
-  workerChipDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    marginRight: 5
-  },
-  selectedWorkerBanner: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    backgroundColor: '#ECFDF5',
-    borderBottomWidth: 1,
-    borderBottomColor: '#A7F3D0',
-    paddingHorizontal: 12,
-    paddingVertical: 8
-  },
-  selectedWorkerBannerTitle: {
+  mapDropdownHeaderLabel: {
     fontSize: 12.5,
-    fontWeight: '700',
-    color: '#065F46'
+    fontWeight: '800',
+    color: '#0F172A'
   },
-  selectedWorkerBannerSub: {
+  mapDropdownSubHint: {
     fontSize: 11,
-    color: '#047857',
-    marginTop: 2
+    color: '#64748B',
+    fontStyle: 'italic'
   },
-  selectedWorkerClearBtn: {
+  mapDropdownTrigger: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
     backgroundColor: '#FFFFFF',
+    borderWidth: 1.5,
+    borderColor: '#BAE6FD',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 2
+  },
+  mapDropdownTriggerActive: {
+    borderColor: '#0284C7',
+    borderBottomLeftRadius: 4,
+    borderBottomRightRadius: 4
+  },
+  mapDropdownSelectedName: {
+    fontSize: 13.5,
+    fontWeight: '800',
+    color: '#0F172A'
+  },
+  mapDropdownBadge: {
+    backgroundColor: '#E0F2FE',
     borderWidth: 1,
-    borderColor: '#FECACA',
-    paddingHorizontal: 9,
-    paddingVertical: 5,
+    borderColor: '#BAE6FD',
+    paddingHorizontal: 7,
+    paddingVertical: 2,
     borderRadius: 6
   },
-  selectedWorkerClearBtnText: {
-    fontSize: 11,
+  mapDropdownBadgeText: {
+    fontSize: 10.5,
     fontWeight: '700',
-    color: '#DC2626'
+    color: '#0284C7'
+  },
+  mapDropdownSelectedSub: {
+    fontSize: 11,
+    color: '#64748B',
+    marginTop: 2
+  },
+  mapDropdownMenu: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1.5,
+    borderTopWidth: 0,
+    borderColor: '#0284C7',
+    borderBottomLeftRadius: 10,
+    borderBottomRightRadius: 10,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 6,
+    elevation: 8,
+    zIndex: 50
+  },
+  mapDropdownItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9'
+  },
+  mapDropdownItemActive: {
+    backgroundColor: '#F0F9FF'
   },
   showAllWorkerOrdersBtn: {
     flexDirection: 'row',
