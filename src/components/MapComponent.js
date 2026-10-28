@@ -37,6 +37,14 @@ const getMapHtml = () => `
       }
     };
 
+    window.parentFocusOrder = function(orderId) {
+      if (window.ReactNativeWebView) {
+        window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'FOCUS_ORDER', orderId: orderId }));
+      } else if (window.parent) {
+        window.parent.postMessage(JSON.stringify({ type: 'FOCUS_ORDER', orderId: orderId }), '*');
+      }
+    };
+
     window.parentSelectWorker = function(workerId) {
       if (window.ReactNativeWebView) {
         window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'SELECT_WORKER', workerId: workerId }));
@@ -364,11 +372,11 @@ const getMapHtml = () => `
             return Number(o.majstor_id) === selId;
           });
 
-          var activeOrderToRoute = null;
+          var focusedMarkerToOpen = null;
 
           workerOrders.forEach(function(o, idx) {
-            var oLat = parseFloat(o.gpsX);
-            var oLng = parseFloat(o.gpsY);
+            var oLat = parseFloat(o.gpsX || o.klijent_gpsX || (o.lat ? o.lat : null));
+            var oLng = parseFloat(o.gpsY || o.klijent_gpsY || (o.lng ? o.lng : null));
             if (!oLat || !oLng) return;
 
             var oPos = [oLat, oLng];
@@ -388,13 +396,11 @@ const getMapHtml = () => `
               statusText = 'U radu na lokaciji';
               statusBg = '#FEF3C7';
               statusBorder = '#FDE68A';
-              if (!activeOrderToRoute) activeOrderToRoute = o;
             } else if (status === 'NA_PUTU') {
               pinColor = '#4F46E5';
               statusText = 'Na putu ka adresi';
               statusBg = '#EEF2FF';
               statusBorder = '#C7D2FE';
-              activeOrderToRoute = o;
             } else if (status === 'PRIHVACENO') {
               pinColor = '#0284C7';
               statusText = 'Prihvaćeno (spremno)';
@@ -432,7 +438,13 @@ const getMapHtml = () => `
 
             var marker = L.marker(oPos, { icon: mIcon }).addTo(map);
 
-            var popupHtml = '<div style="font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',Roboto,sans-serif;min-width:210px;padding:2px;">'
+            marker.on('click', function() {
+              if (window.parentFocusOrder) {
+                window.parentFocusOrder(o.id);
+              }
+            });
+
+            var popupHtml = '<div style="font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',Roboto,sans-serif;min-width:220px;padding:2px;">'
               + '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">'
               + '<b style="color:#0284C7;font-size:12px;">' + (o.broj_naloga || ('Nalog #' + o.id)) + '</b>'
               + (isUrgent ? '<span style="background:#FEE2E2;color:#DC2626;font-size:10px;font-weight:800;padding:1px 5px;border-radius:4px;">⚡ HITNO</span>' : '')
@@ -441,30 +453,42 @@ const getMapHtml = () => `
               + '<div style="font-size:11.5px;color:#475569;margin-bottom:4px;">📍 ' + (o.adresa || '') + (o.sprat_stan ? ' (' + o.sprat_stan + ')' : '') + '</div>'
               + '<div style="margin-bottom:6px;"><span style="display:inline-block;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:700;background:' + statusBg + ';color:' + pinColor + ';border:1px solid ' + statusBorder + ';">' + statusText + '</span></div>'
               + (o.opis_kvara ? '<div style="font-size:10.5px;color:#334155;background:#F8FAFC;padding:5px 7px;border-radius:6px;margin-bottom:6px;border:1px solid #E2E8F0;"><b>Kvar:</b> ' + o.opis_kvara + '</div>' : '')
-              + '<button onclick="window.parentSelectOrder(' + o.id + ')" style="width:100%;padding:7px 0;background:#0284C7;color:white;border:none;border-radius:6px;font-size:11.5px;font-weight:800;cursor:pointer;">Otvori radni nalog ↗</button>'
+              + '<button onclick="window.parentFocusOrder(' + o.id + ')" style="width:100%;padding:6px 0;background:#0284C7;color:white;border:none;border-radius:6px;font-size:11px;font-weight:800;cursor:pointer;margin-bottom:5px;">🚗 Prikaži putanju do lokacije</button>'
+              + '<button onclick="window.parentSelectOrder(' + o.id + ')" style="width:100%;padding:6px 0;background:#F1F5F9;color:#334155;border:1px solid #CBD5E1;border-radius:6px;font-size:11px;font-weight:700;cursor:pointer;">Otvori radni nalog ↗</button>'
               + '</div>';
 
             marker.bindPopup(popupHtml);
             markers['order_' + o.id] = marker;
 
             if (isFocused) {
-              marker.openPopup();
-              activeOrderToRoute = o;
+              focusedMarkerToOpen = marker;
             }
           });
 
-          // Iscrtavanje rute od lokacije majstora do aktivnog ili fokusiranog naloga
-          var targetOrder = payload.focusedOrder || activeOrderToRoute;
-          if (workerPos && targetOrder && targetOrder.gpsX && targetOrder.gpsY) {
-            var destPos = [parseFloat(targetOrder.gpsX), parseFloat(targetOrder.gpsY)];
-            var osrmUrl = 'https://router.project-osrm.org/route/v1/driving/' + workerPos[1] + ',' + workerPos[0] + ';' + destPos[1] + ',' + destPos[0] + '?overview=full&geometries=geojson';
-            fetch(osrmUrl).then(function(res){ return res.json(); }).then(function(d){
-              if (d.routes && d.routes.length > 0) {
-                var coords = d.routes[0].geometry.coordinates.map(function(pt) { return [pt[1], pt[0]]; });
-                if (routeLine) map.removeLayer(routeLine);
-                routeLine = L.polyline(coords, { color: '#0284C7', weight: 5, opacity: 0.9 }).addTo(map);
-              }
-            }).catch(function(){});
+          // Iscrtavanje rute od lokacije majstora ISKLJUČIVO kada je nalog kliknut / fokusiran
+          if (payload.focusedOrder) {
+            var fLat = parseFloat(payload.focusedOrder.gpsX || payload.focusedOrder.klijent_gpsX || (payload.focusedOrder.lat ? payload.focusedOrder.lat : null));
+            var fLng = parseFloat(payload.focusedOrder.gpsY || payload.focusedOrder.klijent_gpsY || (payload.focusedOrder.lng ? payload.focusedOrder.lng : null));
+            if (workerPos && fLat && fLng) {
+              var destPos = [fLat, fLng];
+              var osrmUrl = 'https://router.project-osrm.org/route/v1/driving/' + workerPos[1] + ',' + workerPos[0] + ';' + destPos[1] + ',' + destPos[0] + '?overview=full&geometries=geojson';
+              fetch(osrmUrl).then(function(res){ return res.json(); }).then(function(d){
+                if (d.routes && d.routes.length > 0) {
+                  var coords = d.routes[0].geometry.coordinates.map(function(pt) { return [pt[1], pt[0]]; });
+                  if (routeLine) map.removeLayer(routeLine);
+                  routeLine = L.polyline(coords, { color: '#0284C7', weight: 5, opacity: 0.9 }).addTo(map);
+                }
+              }).catch(function(){});
+            }
+          } else {
+            if (routeLine) {
+              map.removeLayer(routeLine);
+              routeLine = null;
+            }
+          }
+
+          if (focusedMarkerToOpen) {
+            focusedMarkerToOpen.openPopup();
           }
         }
       }
@@ -509,6 +533,7 @@ export default function MapComponent({
   isPinPickerMode = false,
   onPinCoordsChange = null,
   onSelectOrder = null,
+  onFocusOrder = null,
   onSelectWorker = null,
   height = 320
 }) {
@@ -549,6 +574,8 @@ export default function MapComponent({
             if (lastPayloadRef.current && webViewRef.current) {
               webViewRef.current.postMessage(JSON.stringify(lastPayloadRef.current));
             }
+          } else if (data?.type === 'FOCUS_ORDER' && onFocusOrder) {
+            onFocusOrder(data.orderId);
           } else if (data?.type === 'SELECT_ORDER' && onSelectOrder) {
             onSelectOrder(data.orderId);
           } else if (data?.type === 'SELECT_WORKER' && onSelectWorker) {
@@ -561,7 +588,7 @@ export default function MapComponent({
       window.addEventListener('message', handleWebMsg);
       return () => window.removeEventListener('message', handleWebMsg);
     }
-  }, [onSelectOrder, onSelectWorker, onPinCoordsChange]);
+  }, [onSelectOrder, onFocusOrder, onSelectWorker, onPinCoordsChange]);
 
   return (
     <View style={[styles.container, { height }]}>
@@ -580,6 +607,8 @@ export default function MapComponent({
               sendPayload();
             } else if (data.type === 'PIN_MOVE_END' && onPinCoordsChange) {
               onPinCoordsChange({ lat: data.lat, lng: data.lng, isMoving: false });
+            } else if (data.type === 'FOCUS_ORDER' && onFocusOrder) {
+              onFocusOrder(data.orderId);
             } else if (data.type === 'SELECT_ORDER' && onSelectOrder) {
               onSelectOrder(data.orderId);
             } else if (data.type === 'SELECT_WORKER' && onSelectWorker) {

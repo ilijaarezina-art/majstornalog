@@ -911,6 +911,9 @@ export default function DispatcherScreen({ onBackToWorker, onSelectOrder }) {
                               ]}
                               onPress={() => {
                                 setSelectedWorkerId(w.id);
+                                if (focusedOrder && Number(focusedOrder.majstor_id) !== Number(w.id)) {
+                                  setFocusedOrder(null);
+                                }
                                 setIsMapWorkerDropdownOpen(false);
                               }}
                               activeOpacity={0.8}
@@ -971,6 +974,13 @@ export default function DispatcherScreen({ onBackToWorker, onSelectOrder }) {
                 selectedWorkerId={selectedWorkerId}
                 onSelectWorker={(wId) => setSelectedWorkerId(wId)}
                 focusedOrder={focusedOrder}
+                onFocusOrder={(orderId) => {
+                  const fo = orders.find(o => Number(o.id) === Number(orderId));
+                  if (fo) {
+                    setFocusedOrder(fo);
+                    if (fo.majstor_id) setSelectedWorkerId(fo.majstor_id);
+                  }
+                }}
                 workerLocation={myLocation}
                 onSelectOrder={onSelectOrder}
                 height={isDesktop ? (focusedOrder || selectedWorkerId ? 490 : 540) : 280}
@@ -1010,7 +1020,11 @@ export default function DispatcherScreen({ onBackToWorker, onSelectOrder }) {
                       <TouchableOpacity
                         key={fo.id}
                         style={[styles.fieldOrderCard, isFocused && styles.orderCardFocused]}
-                        onPress={() => setFocusedOrder(prev => prev?.id === fo.id ? null : fo)}
+                        onPress={() => setFocusedOrder(prev => {
+                          if (prev?.id === fo.id) return null;
+                          if (fo.majstor_id) setSelectedWorkerId(fo.majstor_id);
+                          return fo;
+                        })}
                         activeOpacity={0.7}
                       >
                         <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -1047,7 +1061,11 @@ export default function DispatcherScreen({ onBackToWorker, onSelectOrder }) {
                             style={[styles.showOnMapBtn, isFocused && styles.showOnMapBtnActive]}
                             onPress={(e) => {
                               e?.stopPropagation?.();
-                              setFocusedOrder(prev => prev?.id === fo.id ? null : fo);
+                              setFocusedOrder(prev => {
+                                if (prev?.id === fo.id) return null;
+                                if (fo.majstor_id) setSelectedWorkerId(fo.majstor_id);
+                                return fo;
+                              });
                             }}
                             activeOpacity={0.7}
                           >
@@ -1182,7 +1200,11 @@ export default function DispatcherScreen({ onBackToWorker, onSelectOrder }) {
                       <TouchableOpacity
                         key={o.id}
                         style={[styles.orderCardDetailed, isFocused && styles.orderCardFocused]}
-                        onPress={() => setFocusedOrder(prev => prev?.id === o.id ? null : o)}
+                        onPress={() => setFocusedOrder(prev => {
+                          if (prev?.id === o.id) return null;
+                          if (o.majstor_id) setSelectedWorkerId(o.majstor_id);
+                          return o;
+                        })}
                         activeOpacity={0.7}
                       >
                         {/* 1. Red: Broj naloga (001/2026), status i prioritet */}
@@ -1248,7 +1270,11 @@ export default function DispatcherScreen({ onBackToWorker, onSelectOrder }) {
                             style={[styles.showOnMapBtn, isFocused && styles.showOnMapBtnActive]}
                             onPress={(e) => {
                               e?.stopPropagation?.();
-                              setFocusedOrder(prev => prev?.id === o.id ? null : o);
+                              setFocusedOrder(prev => {
+                                if (prev?.id === o.id) return null;
+                                if (o.majstor_id) setSelectedWorkerId(o.majstor_id);
+                                return o;
+                              });
                             }}
                             activeOpacity={0.7}
                           >

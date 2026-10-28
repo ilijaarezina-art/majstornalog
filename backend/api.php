@@ -1042,8 +1042,8 @@ elseif ($action === 'get_dispatcher_dashboard') {
     // 1. Majstori i njihova trenutna pozicija (svi aktivni radnici ovog servisa)
     $stmtWorkers = $conn->prepare("
         SELECT k.id, k.ime, k.prezime, k.telefon, k.email, k.lozinka_tekst, k.boja_markera,
-               ml.gpsX as gpsX,
-               ml.gpsY as gpsY,
+               COALESCE(NULLIF(ml.gpsX, 0), 44.6654) as gpsX,
+               COALESCE(NULLIF(ml.gpsY, 0), 20.9288) as gpsY,
                COALESCE(ml.brzina, 0) as brzina,
                COALESCE(ml.kurs, 0) as kurs,
                COALESCE(ml.status, 'SLOBODAN') as radni_status,
@@ -1059,16 +1059,21 @@ elseif ($action === 'get_dispatcher_dashboard') {
     $stmtWorkers->execute([$firma_id]);
     $workers = $stmtWorkers->fetchAll();
 
-    // 2. Nalozi za dispečersku tablu sa podacima o dodeljenom radniku
+    // 2. Nalozi za dispečersku tablu sa podacima o dodeljenom radniku i garantovanim dolaznim koordinatama
     $stmtOrders = $conn->prepare("
-        SELECT rn.*, k.ime_prezime as klijent_ime, k.telefon as klijent_telefon,
+        SELECT rn.*, 
+               k.ime_prezime as klijent_ime, k.telefon as klijent_telefon,
+               k.gpsX as klijent_gpsX, k.gpsY as klijent_gpsY,
+               COALESCE(NULLIF(rn.gpsX, 0), NULLIF(k.gpsX, 0), 44.6627) as gpsX,
+               COALESCE(NULLIF(rn.gpsY, 0), NULLIF(k.gpsY, 0), 20.9300) as gpsY,
                u.kategorija as uredjaj_kategorija, u.proizvodjac as uredjaj_proizvodjac,
                m.ime as majstor_ime, m.prezime as majstor_prezime, m.telefon as majstor_telefon, m.boja_markera as majstor_boja
         FROM radni_nalozi rn
         JOIN klijenti k ON rn.klijent_id = k.id
         LEFT JOIN uredjaji u ON rn.uredjaj_id = u.id
         LEFT JOIN korisnici m ON rn.majstor_id = m.id
-        WHERE rn.firma_id = ? AND (DATE(rn.zakazano_za) = ? OR DATE(rn.kreiran_at) = ? OR rn.status IN ('PRIHVACENO', 'NA_PUTU', 'U_RADU'))
+        WHERE rn.firma_id = ? 
+          AND (DATE(rn.zakazano_za) = ? OR DATE(rn.kreiran_at) = ? OR rn.status IN ('DODELJENO', 'PRIHVACENO', 'NA_PUTU', 'U_RADU', 'ODLOZENO'))
         ORDER BY rn.zakazano_za ASC, rn.id DESC
     ");
     $stmtOrders->execute([$firma_id, $datum, $datum]);
