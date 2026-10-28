@@ -870,7 +870,7 @@ export default function DispatcherScreen({ onBackToWorker, onSelectOrder }) {
                               )}
                             </View>
                             <Text style={styles.mapDropdownSelectedSub}>
-                              📞 {currentWorker.telefon || '-'} • Status: {currentWorker.radni_status || 'SLOBODAN'}
+                              📞 {currentWorker.telefon || '-'} • Status: {currentWorker.radni_status || 'SLOBODAN'}{currentWorker.gpsX ? ' • 🛰️ GPS aktivan' : ' • ⚠️ GPS nije evidentiran'}
                             </Text>
                           </View>
                         </View>
@@ -929,8 +929,7 @@ export default function DispatcherScreen({ onBackToWorker, onSelectOrder }) {
                                   </Text>
                                 </View>
                                 <Text style={styles.workerSelectSub}>
-                                  📞 {w.telefon || '-'} • Status: {w.radni_status || 'SLOBODAN'}
-                                  {inProgressCount > 0 ? ` • ${inProgressCount} u toku` : ''}
+                                  📞 {w.telefon || '-'} • Status: {w.radni_status || 'SLOBODAN'}{inProgressCount > 0 ? ` • ${inProgressCount} u toku` : ''}{w.gpsX ? ' • 🛰️ GPS aktivan' : ' • ⚠️ Nema GPS'}
                                 </Text>
                               </View>
                               {isSel && <Check size={16} color="#0284C7" />}
@@ -981,7 +980,6 @@ export default function DispatcherScreen({ onBackToWorker, onSelectOrder }) {
                     if (fo.majstor_id) setSelectedWorkerId(fo.majstor_id);
                   }
                 }}
-                workerLocation={myLocation}
                 onSelectOrder={onSelectOrder}
                 height={isDesktop ? (focusedOrder || selectedWorkerId ? 490 : 540) : 280}
               />

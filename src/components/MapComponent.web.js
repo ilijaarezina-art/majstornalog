@@ -162,13 +162,8 @@ export default function MapComponent({
     }
 
     // ==========================================================
-    // 2. FOCUSED ORDER MODE (Kliknut je radni nalog na tabli!)
-    // Prikazuje se:
-    // - Dolazna lokacija klijenta (Žuta/crvena čioda + 50m geofence)
-    // - Polazna lokacija ulogovanog korisnika / dodeljenog majstora
-    // - OSRM ruta između njih
-    // ==========================================================
-    if (focusedOrder) {
+    // 2. FOCUSED ORDER MODE (Za ekran pojedinacnog naloga radnika na terenu)
+    if (!isDispatcher && focusedOrder && (!orders || orders.length === 0)) {
       const cLat = parseFloat(focusedOrder.gpsX);
       const cLng = parseFloat(focusedOrder.gpsY);
 

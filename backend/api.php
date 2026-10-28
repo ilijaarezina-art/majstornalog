@@ -166,7 +166,7 @@ try {
           AND status_pretplate != 'ISTEKAO'
     ");
     $conn->exec("UPDATE firme SET status_pretplate = 'ISTEKAO' WHERE status_pretplate = 'BLOKIRAN'");
-    $conn->exec("UPDATE majstori_lokacija SET gpsX = NULL, gpsY = NULL WHERE (status = 'SLOBODAN' OR status IS NULL) AND gpsX = 44.6655");
+    $conn->exec("UPDATE majstori_lokacija SET gpsX = NULL, gpsY = NULL WHERE gpsX IN (44.6654, 44.6655, 44.6627) OR (gpsX IS NOT NULL AND gpsY IS NOT NULL AND gpsX = 0)");
     $conn->exec("UPDATE radni_nalozi SET gpsX = 44.6644, gpsY = 20.9272 WHERE LOWER(adresa) LIKE '%vojvode stepe 1%' AND gpsX > 44.67");
 // 8. Tabela: role (Definisane tri uloge: 1 - superadmin, 2 - admin, 3 - korisnik)
     $conn->exec("
@@ -1042,8 +1042,8 @@ elseif ($action === 'get_dispatcher_dashboard') {
     // 1. Majstori i njihova trenutna pozicija (svi aktivni radnici ovog servisa)
     $stmtWorkers = $conn->prepare("
         SELECT k.id, k.ime, k.prezime, k.telefon, k.email, k.lozinka_tekst, k.boja_markera,
-               COALESCE(NULLIF(ml.gpsX, 0), 44.6654) as gpsX,
-               COALESCE(NULLIF(ml.gpsY, 0), 20.9288) as gpsY,
+               NULLIF(ml.gpsX, 0) as gpsX,
+               NULLIF(ml.gpsY, 0) as gpsY,
                COALESCE(ml.brzina, 0) as brzina,
                COALESCE(ml.kurs, 0) as kurs,
                COALESCE(ml.status, 'SLOBODAN') as radni_status,
@@ -1064,8 +1064,8 @@ elseif ($action === 'get_dispatcher_dashboard') {
         SELECT rn.*, 
                k.ime_prezime as klijent_ime, k.telefon as klijent_telefon,
                k.gpsX as klijent_gpsX, k.gpsY as klijent_gpsY,
-               COALESCE(NULLIF(rn.gpsX, 0), NULLIF(k.gpsX, 0), 44.6627) as gpsX,
-               COALESCE(NULLIF(rn.gpsY, 0), NULLIF(k.gpsY, 0), 20.9300) as gpsY,
+               COALESCE(NULLIF(rn.gpsX, 0), NULLIF(k.gpsX, 0)) as gpsX,
+               COALESCE(NULLIF(rn.gpsY, 0), NULLIF(k.gpsY, 0)) as gpsY,
                u.kategorija as uredjaj_kategorija, u.proizvodjac as uredjaj_proizvodjac,
                m.ime as majstor_ime, m.prezime as majstor_prezime, m.telefon as majstor_telefon, m.boja_markera as majstor_boja
         FROM radni_nalozi rn
@@ -1471,13 +1471,10 @@ elseif ($action === 'save_user') {
                 $chkMl = $conn->prepare("SELECT majstor_id FROM majstori_lokacija WHERE majstor_id = ? LIMIT 1");
                 $chkMl->execute([$newId]);
                 if (!$chkMl->fetch()) {
-                    $initX = 44.6655;
-                    $initY = 20.9290;
-
                     $conn->prepare("
                         INSERT INTO majstori_lokacija (majstor_id, firma_id, gpsX, gpsY, brzina, kurs, status, poslednje_azuriranje)
-                        VALUES (?, ?, ?, ?, 0, 0, 'SLOBODAN', NOW())
-                    ")->execute([$newId, $firma_id, $initX, $initY]);
+                        VALUES (?, ?, NULL, NULL, 0, 0, 'SLOBODAN', NOW())
+                    ")->execute([$newId, $firma_id]);
                 }
             } catch (Exception $mlEx) {
                 // Tiho ignorisi telemetriju

@@ -97,7 +97,7 @@ const getMapHtml = () => `
       }
 
       // 2. FOCUSED ORDER MODE (Detaljan pregled jedne intervencije)
-      if (payload.focusedOrder && (!payload.orders || payload.orders.length === 0)) {
+      if (!payload.isDispatcher && payload.focusedOrder && (!payload.orders || payload.orders.length === 0)) {
         var fo = payload.focusedOrder;
         var cLat = parseFloat(fo.gpsX);
         var cLng = parseFloat(fo.gpsY);
