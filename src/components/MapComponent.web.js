@@ -9,9 +9,14 @@ export default function MapComponent({
   orders = [],
   workers = [],
   isDispatcher = false,
+  selectedWorkerId = null,
+  selectedWorker = null,
   focusedOrder = null,
   isPinPickerMode = false,
   onPinCoordsChange = null,
+  onSelectOrder = null,
+  onFocusOrder = null,
+  onSelectWorker = null,
   height = 320
 }) {
   const mapContainerRef = useRef(null);
@@ -23,11 +28,17 @@ export default function MapComponent({
   const pinPickerInitRef = useRef(false);
   const onPinCoordsChangeRef = useRef(onPinCoordsChange);
   const isPinPickerModeRef = useRef(isPinPickerMode);
+  const onSelectOrderRef = useRef(onSelectOrder);
+  const onFocusOrderRef = useRef(onFocusOrder);
+  const onSelectWorkerRef = useRef(onSelectWorker);
 
   useEffect(() => {
     onPinCoordsChangeRef.current = onPinCoordsChange;
     isPinPickerModeRef.current = isPinPickerMode;
-  }, [onPinCoordsChange, isPinPickerMode]);
+    onSelectOrderRef.current = onSelectOrder;
+    onFocusOrderRef.current = onFocusOrder;
+    onSelectWorkerRef.current = onSelectWorker;
+  }, [onPinCoordsChange, isPinPickerMode, onSelectOrder, onFocusOrder, onSelectWorker]);
 
   useEffect(() => {
     // Inject Leaflet CSS & JS if not already loaded
@@ -233,7 +244,172 @@ export default function MapComponent({
     }
 
     // ==========================================================
-    // 3. REGULAR WORKER DETAIL VIEW
+    // 3. MAJSTOR: PREGLED SVIH DODELJENIH NALOGA I DOLAZNIH LOKACIJA ZA TAJ DAN
+    // ==========================================================
+    if (!isDispatcher && orders && orders.length > 0 && !clientLocation) {
+      let focusedMarkerToOpen = null;
+
+      orders.forEach((o, idx) => {
+        const oLat = parseFloat(o.gpsX || o.klijent_gpsX || (o.lat ? o.lat : null));
+        const oLng = parseFloat(o.gpsY || o.klijent_gpsY || (o.lng ? o.lng : null));
+        if (!oLat || !oLng) return;
+
+        const oPos = [oLat, oLng];
+        bounds.push(oPos);
+
+        const isFocused = focusedOrder && Number(focusedOrder.id) === Number(o.id);
+        const status = o.status || 'DODELJENO';
+        const isUrgent = o.prioritet === 'HITNO';
+
+        let pinColor = '#0284C7';
+        let statusText = 'Dodeljeno (čeka)';
+        let statusBg = '#E0F2FE';
+        let statusBorder = '#BAE6FD';
+
+        if (status === 'U_RADU') {
+          pinColor = '#D97706';
+          statusText = 'U radu na lokaciji';
+          statusBg = '#FEF3C7';
+          statusBorder = '#FDE68A';
+        } else if (status === 'NA_PUTU') {
+          pinColor = '#4F46E5';
+          statusText = 'Na putu ka adresi';
+          statusBg = '#EEF2FF';
+          statusBorder = '#C7D2FE';
+        } else if (status === 'PRIHVACENO') {
+          pinColor = '#0284C7';
+          statusText = 'Prihvaćeno (spremno)';
+          statusBg = '#E0F2FE';
+          statusBorder = '#BAE6FD';
+        } else if (status === 'ZAVRSENO') {
+          const inGeo = Number(o.start_u_opsegu) === 1;
+          pinColor = inGeo ? '#059669' : '#DC2626';
+          statusText = inGeo ? 'Završeno i overeno' : 'Završeno (van opsega)';
+          statusBg = inGeo ? '#DEF7EC' : '#FEE2E2';
+          statusBorder = inGeo ? '#BCF0DA' : '#FECACA';
+        } else if (status === 'ODLOZENO') {
+          pinColor = '#DC2626';
+          statusText = 'Odloženo';
+          statusBg = '#FEE2E2';
+          statusBorder = '#FECACA';
+        }
+
+        const orderNumClean = (o.broj_naloga || '').replace(/^[A-Za-z]+-[0-9]+-/, '');
+        const badgeLabel = orderNumClean ? (`#${orderNumClean}`) : (idx + 1);
+
+        const pinHtml = `<div style="position:relative;display:flex;align-items:center;justify-content:center;cursor:pointer;">`
+          + `<div style="background:${pinColor};color:white;width:34px;height:34px;border-radius:50% 50% 50% 0;transform:rotate(-45deg);border:2.5px solid white;display:flex;align-items:center;justify-content:center;box-shadow:0 3px 10px rgba(0,0,0,0.35);${isFocused ? 'box-shadow:0 0 0 3px #F59E0B, 0 4px 14px rgba(0,0,0,0.5);' : ''}">`
+          + `<span style="transform:rotate(45deg);font-size:11px;font-weight:900;">${badgeLabel}</span>`
+          + `</div>`
+          + (isUrgent ? `<div style="position:absolute;top:-5px;right:-5px;background:#DC2626;color:white;width:15px;height:15px;border-radius:50%;font-size:9px;font-weight:900;display:flex;align-items:center;justify-content:center;border:1.5px solid white;">!</div>` : '')
+          + `</div>`;
+
+        const mIcon = L.divIcon({
+          className: '',
+          html: pinHtml,
+          iconSize: [34, 34],
+          iconAnchor: [17, 34],
+          popupAnchor: [0, -32]
+        });
+
+        const marker = L.marker(oPos, { icon: mIcon }).addTo(map);
+
+        marker.on('click', () => {
+          if (onFocusOrderRef.current) {
+            onFocusOrderRef.current(o.id);
+          }
+        });
+
+        const popupContent = document.createElement('div');
+        popupContent.style.cssText = "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;min-width:220px;padding:2px;";
+        popupContent.innerHTML = `
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+            <b style="color:#0284C7;font-size:12px;">${o.broj_naloga || ('Nalog #' + o.id)}</b>
+            ${isUrgent ? '<span style="background:#FEE2E2;color:#DC2626;font-size:10px;font-weight:800;padding:1px 5px;border-radius:4px;">⚡ HITNO</span>' : ''}
+          </div>
+          <div style="font-size:13px;font-weight:800;color:#0F172A;margin-bottom:2px;">${o.klijent_ime || 'Klijent'}</div>
+          <div style="font-size:11.5px;color:#475569;margin-bottom:4px;">📍 ${o.adresa || ''}${o.sprat_stan ? ' (' + o.sprat_stan + ')' : ''}</div>
+          <div style="margin-bottom:6px;"><span style="display:inline-block;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:700;background:${statusBg};color:${pinColor};border:1px solid ${statusBorder};">${statusText}</span></div>
+          ${o.opis_kvara ? `<div style="font-size:10.5px;color:#334155;background:#F8FAFC;padding:5px 7px;border-radius:6px;margin-bottom:6px;border:1px solid #E2E8F0;"><b>Kvar:</b> ${o.opis_kvara}</div>` : ''}
+          <button id="btn-majstor-focus-${o.id}" style="width:100%;padding:6px 0;background:#0284C7;color:white;border:none;border-radius:6px;font-size:11px;font-weight:800;cursor:pointer;margin-bottom:5px;">🚗 Prikaži putanju do lokacije</button>
+          <button id="btn-majstor-open-${o.id}" style="width:100%;padding:6px 0;background:#F1F5F9;color:#334155;border:1px solid #CBD5E1;border-radius:6px;font-size:11px;font-weight:700;cursor:pointer;">Otvori radni nalog ↗</button>
+        `;
+
+        marker.bindPopup(popupContent);
+        marker.on('popupopen', () => {
+          const btnF = document.getElementById(`btn-majstor-focus-${o.id}`);
+          if (btnF) {
+            btnF.onclick = () => {
+              if (onFocusOrderRef.current) onFocusOrderRef.current(o.id);
+            };
+          }
+          const btnO = document.getElementById(`btn-majstor-open-${o.id}`);
+          if (btnO) {
+            btnO.onclick = () => {
+              if (onSelectOrderRef.current) onSelectOrderRef.current(o.id);
+            };
+          }
+        });
+
+        markersRef.current[`order_${o.id}`] = marker;
+
+        if (isFocused) {
+          focusedMarkerToOpen = marker;
+        }
+      });
+
+      // Trenutna lokacija majstora
+      if (workerLocation && workerLocation.lat && workerLocation.lng) {
+        const mwPos = [parseFloat(workerLocation.lat), parseFloat(workerLocation.lng)];
+        bounds.push(mwPos);
+        const mwIcon = L.divIcon({
+          className: '',
+          html: '<div style="background:#059669;color:white;width:34px;height:34px;border-radius:50%;border:2.5px solid white;display:flex;align-items:center;justify-content:center;box-shadow:0 3px 8px rgba(0,0,0,0.4);font-size:16px;">🚗</div>',
+          iconSize: [34, 34],
+          iconAnchor: [17, 17]
+        });
+        const mwm = L.marker(mwPos, { icon: mwIcon }).addTo(map);
+        mwm.bindPopup(`<b>🚗 Moja trenutna pozicija</b><br>${workerLocation.name || 'Majstor na terenu'}`);
+        markersRef.current['my_location'] = mwm;
+
+        if (focusedOrder) {
+          const fLat = parseFloat(focusedOrder.gpsX || focusedOrder.klijent_gpsX || (focusedOrder.lat ? focusedOrder.lat : null));
+          const fLng = parseFloat(focusedOrder.gpsY || focusedOrder.klijent_gpsY || (focusedOrder.lng ? focusedOrder.lng : null));
+          if (fLat && fLng) {
+            const fPos = [fLat, fLng];
+            const osrmUrl = `https://router.project-osrm.org/route/v1/driving/${mwPos[1]},${mwPos[0]};${fPos[1]},${fPos[0]}?overview=full&geometries=geojson`;
+            fetch(osrmUrl)
+              .then(res => res.json())
+              .then(d => {
+                if (d.routes && d.routes.length > 0) {
+                  const coords = d.routes[0].geometry.coordinates.map(pt => [pt[1], pt[0]]);
+                  if (routeLineRef.current) map.removeLayer(routeLineRef.current);
+                  routeLineRef.current = L.polyline(coords, { color: '#0284C7', weight: 5, opacity: 0.9 }).addTo(map);
+                }
+              })
+              .catch(() => {});
+          }
+        }
+      }
+
+      if (focusedMarkerToOpen) {
+        focusedMarkerToOpen.openPopup();
+      }
+
+      if (bounds.length > 1) {
+        map.fitBounds(bounds, { padding: [40, 40], maxZoom: 16 });
+      } else if (bounds.length === 1) {
+        map.setView(bounds[0], 15);
+      }
+
+      setTimeout(() => {
+        if (mapInstanceRef.current) mapInstanceRef.current.invalidateSize();
+      }, 150);
+      return;
+    }
+
+    // ==========================================================
+    // 4. REGULAR WORKER DETAIL VIEW
     // ==========================================================
     if (!isDispatcher) {
       let clientPos = null;
@@ -325,47 +501,182 @@ export default function MapComponent({
       }
     } 
     // ==========================================================
-    // 4. DISPATCHER OVERVIEW (EKIPE I LOKACIJA KORISNIKA)
-    // Prikazuje samo aktivne majstore i poziciju ulogovanog korisnika.
-    // Nalozi se na mapi prikazuju ISKLJUČIVO kada se klikne na radni nalog!
+    // 4. DISPATCHER OVERVIEW (ODABRANI MAJSTOR I SVI NJEGOVI NALOZI)
     // ==========================================================
     else {
-      // Prikaz majstora na mapi (SAMO ako su aktivni na terenu, NIKADA ako su SLOBODAN ili bez stvarne lokacije)
-      (workers || []).forEach(w => {
-        const isFree = !w.radni_status || w.radni_status === 'SLOBODAN' || w.radni_status === 'NEAKTIVAN';
-        if (w.gpsX && w.gpsY && !isFree) {
-          const pos = [parseFloat(w.gpsX), parseFloat(w.gpsY)];
-          bounds.push(pos);
-          const icon = L.divIcon({
-            className: 'custom-dispatcher-worker',
-            html: `<div style="background:${w.boja_markera || '#059669'};color:white;padding:3px 8px;border-radius:12px;border:2px solid white;box-shadow:0 2px 6px rgba(0,0,0,0.3);font-size:11px;font-weight:700;white-space:nowrap;">🚗 ${w.ime}</div>`,
-            iconSize: [80, 26],
-            iconAnchor: [40, 13]
-          });
-          markersRef.current[`worker_${w.id}`] = L.marker(pos, { icon })
-            .addTo(map)
-            .bindPopup(`<b>Majstor: ${w.ime} ${w.prezime}</b><br/>Tel: ${w.telefon}<br/>Status: <b>${w.radni_status || 'NA TERENU'}</b>`);
-        }
-      });
+      const selId = selectedWorkerId ? Number(selectedWorkerId) : (selectedWorker ? Number(selectedWorker.id) : 0);
+      let selWorker = (workers || []).find(w => Number(w.id) === selId);
+      if (!selWorker && workers && workers.length > 0) {
+        selWorker = workers[0];
+      }
 
-      // Prikaz polazne lokacije ulogovanog korisnika
-      if (workerLocation && workerLocation.lat && workerLocation.lng) {
-        const uPos = [parseFloat(workerLocation.lat), parseFloat(workerLocation.lng)];
-        bounds.push(uPos);
-        const uIcon = L.divIcon({
-          className: 'custom-dispatcher-me',
-          html: '<div style="background:#0284C7;color:white;width:34px;height:34px;border-radius:50%;border:2.5px solid white;display:flex;align-items:center;justify-content:center;box-shadow:0 3px 8px rgba(0,0,0,0.4);font-size:16px;">🏢</div>',
-          iconSize: [34, 34],
-          iconAnchor: [17, 17]
+      let workerPos = null;
+      if (selWorker) {
+        if (selWorker.gpsX && selWorker.gpsY) {
+          workerPos = [parseFloat(selWorker.gpsX), parseFloat(selWorker.gpsY)];
+          bounds.push(workerPos);
+
+          const wColor = selWorker.boja_markera || '#059669';
+          const wIconHtml = `<div style="background:${wColor};color:white;padding:5px 12px;border-radius:18px;border:2.5px solid white;box-shadow:0 4px 14px rgba(0,0,0,0.35);font-size:12px;font-weight:800;white-space:nowrap;display:flex;align-items:center;gap:4px;cursor:pointer;">`
+            + `<span>🚗</span><span>${selWorker.ime} ${selWorker.prezime || ''}</span>`
+            + `</div>`;
+
+          const wm = L.marker(workerPos, {
+            icon: L.divIcon({ className: '', html: wIconHtml, iconSize: [140, 30], iconAnchor: [70, 15] })
+          }).addTo(map);
+
+          wm.bindPopup(`<b>🚗 Majstor: ${selWorker.ime} ${selWorker.prezime || ''}</b><br>📞 ${selWorker.telefon || '-'}<br>Status: ${selWorker.radni_status || 'Aktivan'}`);
+          markersRef.current['selected_worker'] = wm;
+        }
+
+        // Nalozi odabranog majstora za odabrani datum
+        const targetWorkerId = Number(selWorker.id);
+        const workerOrders = (orders || []).filter(o => Number(o.majstor_id) === targetWorkerId);
+
+        let focusedMarkerToOpen = null;
+
+        workerOrders.forEach((o, idx) => {
+          const oLat = parseFloat(o.gpsX || o.klijent_gpsX || (o.lat ? o.lat : null));
+          const oLng = parseFloat(o.gpsY || o.klijent_gpsY || (o.lng ? o.lng : null));
+          if (!oLat || !oLng) return;
+
+          const oPos = [oLat, oLng];
+          bounds.push(oPos);
+
+          const isFocused = focusedOrder && Number(focusedOrder.id) === Number(o.id);
+          const status = o.status || 'DODELJENO';
+          const isUrgent = o.prioritet === 'HITNO';
+
+          let pinColor = '#0284C7';
+          let statusText = 'Dodeljeno (čeka)';
+          let statusBg = '#E0F2FE';
+          let statusBorder = '#BAE6FD';
+
+          if (status === 'U_RADU') {
+            pinColor = '#D97706';
+            statusText = 'U radu na lokaciji';
+            statusBg = '#FEF3C7';
+            statusBorder = '#FDE68A';
+          } else if (status === 'NA_PUTU') {
+            pinColor = '#4F46E5';
+            statusText = 'Na putu ka adresi';
+            statusBg = '#EEF2FF';
+            statusBorder = '#C7D2FE';
+          } else if (status === 'PRIHVACENO') {
+            pinColor = '#0284C7';
+            statusText = 'Prihvaćeno (spremno)';
+            statusBg = '#E0F2FE';
+            statusBorder = '#BAE6FD';
+          } else if (status === 'ZAVRSENO') {
+            const inGeo = Number(o.start_u_opsegu) === 1;
+            pinColor = inGeo ? '#059669' : '#DC2626';
+            statusText = inGeo ? 'Završeno i overeno' : 'Završeno (van opsega)';
+            statusBg = inGeo ? '#DEF7EC' : '#FEE2E2';
+            statusBorder = inGeo ? '#BCF0DA' : '#FECACA';
+          } else if (status === 'ODLOZENO') {
+            pinColor = '#DC2626';
+            statusText = 'Odloženo';
+            statusBg = '#FEE2E2';
+            statusBorder = '#FECACA';
+          }
+
+          const orderNumClean = (o.broj_naloga || '').replace(/^[A-Za-z]+-[0-9]+-/, '');
+          const badgeLabel = orderNumClean ? (`#${orderNumClean}`) : (idx + 1);
+
+          const pinHtml = `<div style="position:relative;display:flex;align-items:center;justify-content:center;cursor:pointer;">`
+            + `<div style="background:${pinColor};color:white;width:34px;height:34px;border-radius:50% 50% 50% 0;transform:rotate(-45deg);border:2.5px solid white;display:flex;align-items:center;justify-content:center;box-shadow:0 3px 10px rgba(0,0,0,0.35);${isFocused ? 'box-shadow:0 0 0 3px #F59E0B, 0 4px 14px rgba(0,0,0,0.5);' : ''}">`
+            + `<span style="transform:rotate(45deg);font-size:11px;font-weight:900;">${badgeLabel}</span>`
+            + `</div>`
+            + (isUrgent ? `<div style="position:absolute;top:-5px;right:-5px;background:#DC2626;color:white;width:15px;height:15px;border-radius:50%;font-size:9px;font-weight:900;display:flex;align-items:center;justify-content:center;border:1.5px solid white;">!</div>` : '')
+            + `</div>`;
+
+          const mIcon = L.divIcon({
+            className: '',
+            html: pinHtml,
+            iconSize: [34, 34],
+            iconAnchor: [17, 34],
+            popupAnchor: [0, -32]
+          });
+
+          const marker = L.marker(oPos, { icon: mIcon }).addTo(map);
+
+          marker.on('click', () => {
+            if (onFocusOrderRef.current) {
+              onFocusOrderRef.current(o.id);
+            }
+          });
+
+          const popupContent = document.createElement('div');
+          popupContent.style.cssText = "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;min-width:220px;padding:2px;";
+          popupContent.innerHTML = `
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+              <b style="color:#0284C7;font-size:12px;">${o.broj_naloga || ('Nalog #' + o.id)}</b>
+              ${isUrgent ? '<span style="background:#FEE2E2;color:#DC2626;font-size:10px;font-weight:800;padding:1px 5px;border-radius:4px;">⚡ HITNO</span>' : ''}
+            </div>
+            <div style="font-size:13px;font-weight:800;color:#0F172A;margin-bottom:2px;">${o.klijent_ime || 'Klijent'}</div>
+            <div style="font-size:11.5px;color:#475569;margin-bottom:4px;">📍 ${o.adresa || ''}${o.sprat_stan ? ' (' + o.sprat_stan + ')' : ''}</div>
+            <div style="margin-bottom:6px;"><span style="display:inline-block;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:700;background:${statusBg};color:${pinColor};border:1px solid ${statusBorder};">${statusText}</span></div>
+            ${o.opis_kvara ? `<div style="font-size:10.5px;color:#334155;background:#F8FAFC;padding:5px 7px;border-radius:6px;margin-bottom:6px;border:1px solid #E2E8F0;"><b>Kvar:</b> ${o.opis_kvara}</div>` : ''}
+            <button id="btn-focus-${o.id}" style="width:100%;padding:6px 0;background:#0284C7;color:white;border:none;border-radius:6px;font-size:11px;font-weight:800;cursor:pointer;margin-bottom:5px;">🚗 Prikaži putanju do lokacije</button>
+            <button id="btn-open-${o.id}" style="width:100%;padding:6px 0;background:#F1F5F9;color:#334155;border:1px solid #CBD5E1;border-radius:6px;font-size:11px;font-weight:700;cursor:pointer;">Otvori radni nalog ↗</button>
+          `;
+
+          marker.bindPopup(popupContent);
+          marker.on('popupopen', () => {
+            const btnF = document.getElementById(`btn-focus-${o.id}`);
+            if (btnF) {
+              btnF.onclick = () => {
+                if (onFocusOrderRef.current) onFocusOrderRef.current(o.id);
+              };
+            }
+            const btnO = document.getElementById(`btn-open-${o.id}`);
+            if (btnO) {
+              btnO.onclick = () => {
+                if (onSelectOrderRef.current) onSelectOrderRef.current(o.id);
+              };
+            }
+          });
+
+          markersRef.current[`order_${o.id}`] = marker;
+
+          if (isFocused) {
+            focusedMarkerToOpen = marker;
+          }
         });
-        markersRef.current['dispatcher_me'] = L.marker(uPos, { icon: uIcon })
-          .addTo(map)
-          .bindPopup(`<b>Vaša lokacija:</b><br/>${workerLocation.name || 'Dispečerski centar'}`);
+
+        // Iscrtavanje rute od lokacije majstora ISKLJUČIVO kada je nalog kliknut / fokusiran
+        if (focusedOrder) {
+          const fLat = parseFloat(focusedOrder.gpsX || focusedOrder.klijent_gpsX || (focusedOrder.lat ? focusedOrder.lat : null));
+          const fLng = parseFloat(focusedOrder.gpsY || focusedOrder.klijent_gpsY || (focusedOrder.lng ? focusedOrder.lng : null));
+          if (workerPos && fLat && fLng) {
+            const destPos = [fLat, fLng];
+            const osrmUrl = `https://router.project-osrm.org/route/v1/driving/${workerPos[1]},${workerPos[0]};${destPos[1]},${destPos[0]}?overview=full&geometries=geojson`;
+            fetch(osrmUrl)
+              .then(res => res.json())
+              .then(data => {
+                if (data.routes && data.routes.length > 0) {
+                  const coords = data.routes[0].geometry.coordinates.map(pt => [pt[1], pt[0]]);
+                  if (routeLineRef.current) map.removeLayer(routeLineRef.current);
+                  routeLineRef.current = L.polyline(coords, { color: '#0284C7', weight: 5, opacity: 0.9 }).addTo(map);
+                }
+              })
+              .catch(() => {});
+          }
+        } else {
+          if (routeLineRef.current) {
+            map.removeLayer(routeLineRef.current);
+            routeLineRef.current = null;
+          }
+        }
+
+        if (focusedMarkerToOpen) {
+          focusedMarkerToOpen.openPopup();
+        }
       }
     }
 
     if (bounds.length > 1) {
-      map.fitBounds(bounds, { padding: [40, 40], maxZoom: 16 });
+      map.fitBounds(bounds, { padding: [45, 45], maxZoom: 16 });
     } else if (bounds.length === 1) {
       map.setView(bounds[0], 15);
     }
@@ -374,12 +685,12 @@ export default function MapComponent({
       if (mapInstanceRef.current) {
         mapInstanceRef.current.invalidateSize();
       }
-    }, 200);
+    }, 150);
   };
 
   useEffect(() => {
     updateMapLayers();
-  }, [clientLocation, workerLocation, startLocation, orders, workers, isDispatcher, focusedOrder, isPinPickerMode]);
+  }, [clientLocation, workerLocation, startLocation, orders, workers, isDispatcher, selectedWorkerId, selectedWorker, focusedOrder, isPinPickerMode]);
 
   return (
     <View style={[styles.container, { height }]}>
