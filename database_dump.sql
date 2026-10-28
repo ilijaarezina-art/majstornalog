@@ -221,8 +221,6 @@ CREATE TABLE IF NOT EXISTS `majstori_lokacija` (
   `firma_id` int(11) NOT NULL,
   `gpsX` double DEFAULT NULL,
   `gpsY` double DEFAULT NULL,
-  `x_koordinata` double DEFAULT NULL,
-  `y_koordinata` double DEFAULT NULL,
   `brzina` float DEFAULT 0,
   `kurs` float DEFAULT 0,
   `status` enum('SLOBODAN','NA_PUTU','NA_TERENU','PAUZA') DEFAULT 'SLOBODAN',

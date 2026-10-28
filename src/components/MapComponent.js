@@ -26,6 +26,11 @@ const getMapHtml = () => `
     var routeLine = null;
     var geofenceCircle = null;
     var connectLine = null;
+    var hasFittedWorkerBounds = false;
+    var lastWorkerFocusedId = null;
+    var hasFittedDispatcherBounds = false;
+    var lastDispatcherWorkerId = null;
+    var lastDispatcherFocusedId = null;
     var pinPickerInit = false;
     var isPinPickerCurrent = false;
 
@@ -269,10 +274,16 @@ const getMapHtml = () => `
           return;
         }
 
-        if (bounds.length > 1) {
-          map.fitBounds(bounds, { padding: [35, 35], maxZoom: 16 });
-        } else if (bounds.length === 1) {
-          map.setView(bounds[0], 15);
+        var curFocusedId = payload.focusedOrder ? Number(payload.focusedOrder.id) : null;
+        var shouldFit = !hasFittedWorkerBounds || (curFocusedId !== lastWorkerFocusedId);
+        if (shouldFit) {
+          if (bounds.length > 1) {
+            map.fitBounds(bounds, { padding: [35, 35], maxZoom: 16 });
+          } else if (bounds.length === 1) {
+            map.setView(bounds[0], 15);
+          }
+          hasFittedWorkerBounds = true;
+          lastWorkerFocusedId = curFocusedId;
         }
         return;
       }
@@ -351,8 +362,8 @@ const getMapHtml = () => `
         var workerPos = null;
         if (selWorker) {
           var isWorkerOnline = Number(selWorker.log_in_out) === 1;
-          var workerX = selWorker.x_koordinata || selWorker.gpsX;
-          var workerY = selWorker.y_koordinata || selWorker.gpsY;
+          var workerX = selWorker.gpsX;
+          var workerY = selWorker.gpsY;
 
           if (isWorkerOnline && workerX && workerY && parseFloat(workerX) !== 0) {
             workerPos = [parseFloat(workerX), parseFloat(workerY)];
@@ -497,10 +508,21 @@ const getMapHtml = () => `
         }
       }
 
-      if (bounds.length > 1) {
-        map.fitBounds(bounds, { padding: [40, 40], maxZoom: 16 });
-      } else if (bounds.length === 1) {
-        map.setView(bounds[0], 15);
+      var curDispWorkerId = selWorker ? Number(selWorker.id) : null;
+      var curDispFocusedId = payload.focusedOrder ? Number(payload.focusedOrder.id) : null;
+      var shouldFitDisp = !hasFittedDispatcherBounds 
+        || (curDispWorkerId !== lastDispatcherWorkerId) 
+        || (curDispFocusedId !== lastDispatcherFocusedId);
+
+      if (shouldFitDisp) {
+        if (bounds.length > 1) {
+          map.fitBounds(bounds, { padding: [40, 40], maxZoom: 16 });
+        } else if (bounds.length === 1) {
+          map.setView(bounds[0], 15);
+        }
+        hasFittedDispatcherBounds = true;
+        lastDispatcherWorkerId = curDispWorkerId;
+        lastDispatcherFocusedId = curDispFocusedId;
       }
     }
 

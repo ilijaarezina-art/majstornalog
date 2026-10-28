@@ -23,6 +23,11 @@ export default function MapComponent({
   const mapInstanceRef = useRef(null);
   const markersRef = useRef({});
   const routeLineRef = useRef(null);
+  const hasFittedWorkerBoundsRef = useRef(false);
+  const lastWorkerFocusedIdRef = useRef(null);
+  const hasFittedDispatcherBoundsRef = useRef(false);
+  const lastDispatcherWorkerIdRef = useRef(null);
+  const lastDispatcherFocusedIdRef = useRef(null);
   const geofenceCircleRef = useRef(null);
   const connectLineRef = useRef(null);
   const pinPickerInitRef = useRef(false);
@@ -391,10 +396,17 @@ export default function MapComponent({
         focusedMarkerToOpen.openPopup();
       }
 
-      if (bounds.length > 1) {
-        map.fitBounds(bounds, { padding: [40, 40], maxZoom: 16 });
-      } else if (bounds.length === 1) {
-        map.setView(bounds[0], 15);
+      const curFocusedId = focusedOrder ? Number(focusedOrder.id) : null;
+      const shouldFitWorker = !hasFittedWorkerBoundsRef.current || (curFocusedId !== lastWorkerFocusedIdRef.current);
+
+      if (shouldFitWorker) {
+        if (bounds.length > 1) {
+          map.fitBounds(bounds, { padding: [40, 40], maxZoom: 16 });
+        } else if (bounds.length === 1) {
+          map.setView(bounds[0], 15);
+        }
+        hasFittedWorkerBoundsRef.current = true;
+        lastWorkerFocusedIdRef.current = curFocusedId;
       }
 
       setTimeout(() => {
@@ -508,8 +520,8 @@ export default function MapComponent({
       let workerPos = null;
       if (selWorker) {
         const isWorkerOnline = Number(selWorker.log_in_out) === 1;
-        const workerX = selWorker.x_koordinata || selWorker.gpsX;
-        const workerY = selWorker.y_koordinata || selWorker.gpsY;
+        const workerX = selWorker.gpsX;
+        const workerY = selWorker.gpsY;
 
         if (isWorkerOnline && workerX && workerY && parseFloat(workerX) !== 0) {
           workerPos = [parseFloat(workerX), parseFloat(workerY)];
@@ -674,10 +686,21 @@ export default function MapComponent({
       }
     }
 
-    if (bounds.length > 1) {
-      map.fitBounds(bounds, { padding: [45, 45], maxZoom: 16 });
-    } else if (bounds.length === 1) {
-      map.setView(bounds[0], 15);
+    const curDispWorkerId = selWorker ? Number(selWorker.id) : null;
+    const curDispFocusedId = focusedOrder ? Number(focusedOrder.id) : null;
+    const shouldFitDisp = !hasFittedDispatcherBoundsRef.current 
+      || (curDispWorkerId !== lastDispatcherWorkerIdRef.current)
+      || (curDispFocusedId !== lastDispatcherFocusedIdRef.current);
+
+    if (shouldFitDisp) {
+      if (bounds.length > 1) {
+        map.fitBounds(bounds, { padding: [45, 45], maxZoom: 16 });
+      } else if (bounds.length === 1) {
+        map.setView(bounds[0], 15);
+      }
+      hasFittedDispatcherBoundsRef.current = true;
+      lastDispatcherWorkerIdRef.current = curDispWorkerId;
+      lastDispatcherFocusedIdRef.current = curDispFocusedId;
     }
 
     setTimeout(() => {

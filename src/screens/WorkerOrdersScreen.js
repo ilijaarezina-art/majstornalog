@@ -54,57 +54,121 @@ export default function WorkerOrdersScreen({ onSelectOrder }) {
   const [myLocation, setMyLocation] = useState(null);
   const [focusedOrder, setFocusedOrder] = useState(null);
   const [mapExpanded, setMapExpanded] = useState(true);
+  const [gpsStatus, setGpsStatus] = useState('searching'); // 'searching' | 'active' | 'denied'
+  const [gpsAccuracy, setGpsAccuracy] = useState(null);
+  const lastSentRef = useRef(0);
+  const lastPosRef = useRef(null);
+  const ordersRef = useRef([]);
 
-  // Preuzimanje i slanje GPS lokacije majstora na server
-  useEffect(() => {
-    if (!user?.id) return;
-    if (typeof navigator !== 'undefined' && navigator.geolocation) {
-      let lastSent = 0;
-      const handlePos = (pos) => {
-        if (!pos || !pos.coords) return;
-        const lat = pos.coords.latitude;
-        const lng = pos.coords.longitude;
+  // Robusno i stabilno GPS praćenje telefona majstora (Dual-Mode: Brza mreža + Satelit)
+  const startGpsTracking = useCallback(() => {
+    if (typeof navigator === 'undefined' || !navigator.geolocation) {
+      setGpsStatus('denied');
+      return () => {};
+    }
+
+    setGpsStatus('searching');
+
+    const onPosition = (pos) => {
+      if (!pos || !pos.coords) return;
+      const lat = pos.coords.latitude;
+      const lng = pos.coords.longitude;
+      const acc = Math.round(pos.coords.accuracy || 0);
+      const speed = pos.coords.speed || 0;
+      const heading = pos.coords.heading || 0;
+
+      setGpsStatus('active');
+      setGpsAccuracy(acc);
+
+      // Pomeraj od najmanje 8 metara da se spreči podrhtavanje/treperenje mape
+      let dist = 999;
+      if (lastPosRef.current) {
+        const dLat = (lat - lastPosRef.current.lat) * 111320;
+        const dLng = (lng - lastPosRef.current.lng) * 111320 * Math.cos(lat * (Math.PI / 180));
+        dist = Math.sqrt(dLat * dLat + dLng * dLng);
+      }
+
+      if (dist >= 8 || !lastPosRef.current) {
+        lastPosRef.current = { lat, lng };
         setMyLocation({
           lat,
           lng,
           name: `${user?.ime || 'Majstor'} (Moja lokacija)`
         });
+      }
 
-        const now = Date.now();
-        if (now - lastSent >= 10000) {
-          lastSent = now;
-          api.updateLocation(user.id, user.firma_id, {
-            x_koordinata: lat,
-            y_koordinata: lng,
-            lat,
-            lng,
-            speed: pos.coords.speed || 0,
-            heading: pos.coords.heading || 0,
-            log_in_out: 1
-          }).catch(() => {});
-        }
-      };
+      // Slanje u tabelu majstori_lokacija na serveru (max jednom na 10 sekundi)
+      const now = Date.now();
+      if (now - lastSentRef.current >= 10000 || lastSentRef.current === 0) {
+        lastSentRef.current = now;
+        api.updateLocation(user.id, user.firma_id, {
+          gpsX: lat,
+          gpsY: lng,
+          lat,
+          lng,
+          speed,
+          heading,
+          log_in_out: 1
+        }).then(() => {
+          console.log('[GPS] Uspešno upisano u majstori_lokacija:', lat, lng);
+        }).catch(err => {
+          console.warn('[GPS] Greška slanja telemetrije:', err.message);
+        });
+      }
+    };
 
-      navigator.geolocation.getCurrentPosition(handlePos, () => {}, {
-        enableHighAccuracy: true,
-        timeout: 10000
-      });
+    const onError = (err) => {
+      console.warn('[GPS] Geolocation greška:', err.code, err.message);
+      if (err.code === 1) { // PERMISSION_DENIED
+        setGpsStatus('denied');
+      } else {
+        // Fallback: Pokušaj preko baznih stanica/WiFi ako sateliti nisu dostupni u zatvorenom prostoru
+        navigator.geolocation.getCurrentPosition(onPosition, () => {
+          setGpsStatus('denied');
+        }, { enableHighAccuracy: false, timeout: 20000, maximumAge: 60000 });
+      }
+    };
 
-      const watchId = navigator.geolocation.watchPosition(handlePos, () => {}, {
-        enableHighAccuracy: true,
-        maximumAge: 5000,
-        timeout: 15000
-      });
+    // 1. Faza: Brz zahvat sa mreže (radi momentalno u sekundi)
+    navigator.geolocation.getCurrentPosition(onPosition, onError, {
+      enableHighAccuracy: false,
+      timeout: 15000,
+      maximumAge: 60000
+    });
 
-      return () => navigator.geolocation.clearWatch(watchId);
-    }
+    // 2. Faza: Kontinuirano satelitsko praćenje
+    const watchId = navigator.geolocation.watchPosition(onPosition, onError, {
+      enableHighAccuracy: true,
+      maximumAge: 5000,
+      timeout: 25000
+    });
+
+    return () => {
+      if (typeof navigator !== 'undefined' && navigator.geolocation && watchId) {
+        navigator.geolocation.clearWatch(watchId);
+      }
+    };
   }, [user?.id, user?.firma_id, user?.ime]);
+
+  useEffect(() => {
+    if (!user?.id) return;
+    const cleanup = startGpsTracking();
+    return () => {
+      if (cleanup) cleanup();
+    };
+  }, [user?.id, startGpsTracking]);
 
   const fetchOrders = useCallback(async () => {
     if (!user?.id) return;
     try {
       const data = await api.getMyOrders(user.id);
-      setOrders(data || []);
+      const newOrders = data || [];
+      const prevSig = (ordersRef.current || []).map(o => `${o.id}-${o.status}`).join(',');
+      const newSig = newOrders.map(o => `${o.id}-${o.status}`).join(',');
+      if (prevSig !== newSig || (ordersRef.current || []).length !== newOrders.length) {
+        ordersRef.current = newOrders;
+        setOrders(newOrders);
+      }
     } catch (err) {
       console.warn('Greška pri dohvatanju naloga:', err.message);
     } finally {
@@ -473,6 +537,22 @@ export default function WorkerOrdersScreen({ onSelectOrder }) {
           )}
         </View>
 
+        {/* GPS indikator statusa telefona majstora */}
+        <View style={styles.gpsStatusBar}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1 }}>
+            <View style={[styles.gpsDot, { backgroundColor: gpsStatus === 'active' ? '#059669' : (gpsStatus === 'searching' ? '#D97706' : '#DC2626') }]} />
+            <Text style={styles.gpsStatusText}>
+              {gpsStatus === 'active' 
+                ? `🛰️ GPS aktivan na telefonu (Tačnost ±${gpsAccuracy || 10}m)`
+                : (gpsStatus === 'searching' ? '⏳ Povezivanje GPS signala sa telefona...' : '⚠️ Lokacija onemogućena u pretraživaču')}
+            </Text>
+          </View>
+          <TouchableOpacity onPress={startGpsTracking} style={styles.gpsRetryBtn} activeOpacity={0.7}>
+            <RefreshCw size={12} color="#0284C7" style={{ marginRight: 4 }} />
+            <Text style={styles.gpsRetryText}>Osveži GPS</Text>
+          </TouchableOpacity>
+        </View>
+
         {(mapExpanded || isDesktop) && (
           <View style={styles.mapWrapper}>
             <MapComponent
@@ -685,6 +765,39 @@ const styles = StyleSheet.create({
   },
 
   // Mapa dolaznih lokacija
+  gpsStatusBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#F8FAFC',
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E2E8F0',
+  },
+  gpsDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  gpsStatusText: {
+    fontSize: 11.5,
+    fontWeight: '700',
+    color: '#334155',
+  },
+  gpsRetryBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 2,
+    paddingHorizontal: 6,
+    borderRadius: 6,
+    backgroundColor: '#E0F2FE',
+  },
+  gpsRetryText: {
+    fontSize: 10.5,
+    fontWeight: '800',
+    color: '#0284C7',
+  },
   mapCard: {
     backgroundColor: '#FFFFFF',
     borderRadius: 14,

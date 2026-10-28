@@ -2,12 +2,12 @@
   "expo": {
     "name": "MajstorNalog",
     "slug": "majstornalog",
-    "version": "1.0.8",
+    "version": "1.0.9",
     "orientation": "default",
     "userInterfaceStyle": "light",
     "android": {
       "package": "com.majstornalog.app",
-      "versionCode": 9,
+      "versionCode": 10,
       "permissions": [
         "ACCESS_COARSE_LOCATION",
         "ACCESS_FINE_LOCATION",

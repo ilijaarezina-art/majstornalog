@@ -154,15 +154,13 @@ export const api = {
   },
 
   updateLocation: async (workerId, firmId, coords, status = 'NA_TERENU', orderId = null) => {
-    const lat = coords.latitude || coords.lat || coords.x_koordinata;
-    const lng = coords.longitude || coords.lng || coords.y_koordinata;
+    const lat = coords.latitude || coords.lat || coords.gpsX;
+    const lng = coords.longitude || coords.lng || coords.gpsY;
     return request('update_location', {
       method: 'POST',
       body: {
         majstor_id: workerId,
         firma_id: firmId,
-        x_koordinata: lat,
-        y_koordinata: lng,
         gpsX: lat,
         gpsY: lng,
         brzina: coords.speed || 0,
