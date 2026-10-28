@@ -28,14 +28,20 @@ import {
   Navigation,
   Inbox,
   Play,
-  RotateCcw
+  RotateCcw,
+  Layers,
+  ChevronDown,
+  ChevronUp,
+  X,
+  Compass
 } from 'lucide-react-native';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../services/api';
 import { colors } from '../theme/colors';
+import MapComponent from '../components/MapComponent';
 
-export default function WorkerOrdersScreen({ onSelectOrder, onOpenDispatcher }) {
-  const { user, logout, isOwner, isDispatcher, isSuperAdmin } = useAuth();
+export default function WorkerOrdersScreen({ onSelectOrder }) {
+  const { user, logout } = useAuth();
   const { width } = useWindowDimensions();
   const isDesktop = width >= 800;
 
@@ -43,6 +49,37 @@ export default function WorkerOrdersScreen({ onSelectOrder, onOpenDispatcher }) 
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [actionLoading, setActionLoading] = useState(null);
+
+  // GPS praćenje lokacije majstora na mapi
+  const [myLocation, setMyLocation] = useState(null);
+  const [focusedOrder, setFocusedOrder] = useState(null);
+  const [mapExpanded, setMapExpanded] = useState(true);
+
+  // Preuzimanje GPS lokacije majstora (pregledač / mobilni uređaj)
+  useEffect(() => {
+    if (typeof navigator !== 'undefined' && navigator.geolocation) {
+      const handlePos = (pos) => {
+        setMyLocation({
+          lat: pos.coords.latitude,
+          lng: pos.coords.longitude,
+          name: `${user?.ime || 'Majstor'} (Moja lokacija)`
+        });
+      };
+
+      navigator.geolocation.getCurrentPosition(handlePos, () => {}, {
+        enableHighAccuracy: true,
+        timeout: 10000
+      });
+
+      const watchId = navigator.geolocation.watchPosition(handlePos, () => {}, {
+        enableHighAccuracy: true,
+        maximumAge: 10000,
+        timeout: 15000
+      });
+
+      return () => navigator.geolocation.clearWatch(watchId);
+    }
+  }, [user?.ime]);
 
   const fetchOrders = useCallback(async () => {
     if (!user?.id) return;
@@ -146,7 +183,6 @@ export default function WorkerOrdersScreen({ onSelectOrder, onOpenDispatcher }) 
       case 'ZAVRSENO': {
         const inGeofence = item ? (Number(item.start_u_opsegu) === 1) : true;
         if (!inGeofence) {
-          // Završeno van opsega dolazne stanice -> crvena pozadina
           return {
             step: 5,
             label: '5. ZAVRŠENO I OVERENO',
@@ -180,6 +216,7 @@ export default function WorkerOrdersScreen({ onSelectOrder, onOpenDispatcher }) 
   const totalOrders = orders.length;
   const inProgress = orders.filter(o => ['PRIHVACENO', 'NA_PUTU', 'U_RADU'].includes(o.status)).length;
   const completedToday = orders.filter(o => o.status === 'ZAVRSENO').length;
+  const ordersWithGps = orders.filter(o => parseFloat(o.gpsX) && parseFloat(o.gpsY));
 
   const renderOrderItem = ({ item }) => {
     const sb = getStatusBadge(item.status, item);
@@ -187,9 +224,11 @@ export default function WorkerOrdersScreen({ onSelectOrder, onOpenDispatcher }) 
     const isUrgent = item.prioritet === 'HITNO';
     const isDone = item.status === 'ZAVRSENO';
     const isBusy = actionLoading === item.id;
+    const hasGps = Boolean(parseFloat(item.gpsX) && parseFloat(item.gpsY));
+    const isFocused = focusedOrder && Number(focusedOrder.id) === Number(item.id);
 
     return (
-      <View style={styles.card}>
+      <View style={[styles.card, isFocused && styles.cardFocused]}>
         {/* Card Header: RN Number, Priority, Status */}
         <View style={styles.cardHeader}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
@@ -222,20 +261,42 @@ export default function WorkerOrdersScreen({ onSelectOrder, onOpenDispatcher }) 
         </View>
 
         {/* Address & Navigation */}
-        <TouchableOpacity
-          style={styles.addressSection}
-          onPress={() => handleOpenNavigation(item.gpsX, item.gpsY, item.adresa)}
-          activeOpacity={0.7}
-        >
-          <MapPin size={16} color={colors.primary} style={{ marginRight: 6, marginTop: 2 }} />
-          <View style={{ flex: 1 }}>
-            <Text style={styles.addressText} numberOfLines={2}>
-              {item.adresa}
-              {item.sprat_stan ? ` (${item.sprat_stan})` : ''}
-            </Text>
-            <Text style={styles.navHint}>Kliknite za GPS navigaciju ↗</Text>
-          </View>
-        </TouchableOpacity>
+        <View style={styles.addressContainer}>
+          <TouchableOpacity
+            style={styles.addressSection}
+            onPress={() => handleOpenNavigation(item.gpsX, item.gpsY, item.adresa)}
+            activeOpacity={0.7}
+          >
+            <MapPin size={16} color={colors.primary} style={{ marginRight: 6, marginTop: 2 }} />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.addressText} numberOfLines={2}>
+                {item.adresa}
+                {item.sprat_stan ? ` (${item.sprat_stan})` : ''}
+              </Text>
+              <Text style={styles.navHint}>Kliknite za GPS navigaciju ↗</Text>
+            </View>
+          </TouchableOpacity>
+
+          {hasGps && (
+            <TouchableOpacity
+              style={[styles.mapFocusBtn, isFocused && styles.mapFocusBtnActive]}
+              onPress={() => {
+                if (isFocused) {
+                  setFocusedOrder(null);
+                } else {
+                  setFocusedOrder(item);
+                  setMapExpanded(true);
+                }
+              }}
+              activeOpacity={0.8}
+            >
+              <Compass size={13} color={isFocused ? '#FFFFFF' : '#0284C7'} style={{ marginRight: 4 }} />
+              <Text style={[styles.mapFocusBtnText, isFocused && styles.mapFocusBtnTextActive]}>
+                {isFocused ? 'Označen na mapi' : 'Prikaži na mapi'}
+              </Text>
+            </TouchableOpacity>
+          )}
+        </View>
 
         {/* Appliance info */}
         {item.uredjaj_kategorija ? (
@@ -359,30 +420,93 @@ export default function WorkerOrdersScreen({ onSelectOrder, onOpenDispatcher }) 
     );
   };
 
+  // Sekcija sa mapom dolaznih lokacija za majstora
+  const renderMapSection = () => {
+    return (
+      <View style={styles.mapCard}>
+        <View style={styles.mapHeaderRow}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1 }}>
+            <MapPin size={17} color="#0284C7" />
+            <Text style={styles.mapCardTitle}>
+              Dolazne lokacije za danas ({ordersWithGps.length})
+            </Text>
+          </View>
+
+          {focusedOrder && (
+            <TouchableOpacity
+              style={styles.clearFocusBtn}
+              onPress={() => setFocusedOrder(null)}
+              activeOpacity={0.7}
+            >
+              <X size={12} color="#DC2626" style={{ marginRight: 3 }} />
+              <Text style={styles.clearFocusText}>Poništi fokus: {focusedOrder.broj_naloga}</Text>
+            </TouchableOpacity>
+          )}
+
+          {!isDesktop && (
+            <TouchableOpacity
+              style={styles.mapToggleBtn}
+              onPress={() => setMapExpanded(!mapExpanded)}
+              activeOpacity={0.7}
+            >
+              {mapExpanded ? <ChevronUp size={16} color="#64748B" /> : <ChevronDown size={16} color="#64748B" />}
+            </TouchableOpacity>
+          )}
+        </View>
+
+        {(mapExpanded || isDesktop) && (
+          <View style={styles.mapWrapper}>
+            <MapComponent
+              orders={orders}
+              workerLocation={myLocation}
+              focusedOrder={focusedOrder}
+              onSelectOrder={onSelectOrder}
+              height={isDesktop ? 520 : 260}
+            />
+
+            {/* Legenda statusa na mapi */}
+            <View style={styles.mapLegendRow}>
+              <View style={styles.legendItem}>
+                <View style={[styles.legendDot, { backgroundColor: '#0284C7' }]} />
+                <Text style={styles.legendText}>Dodeljeno/Prihvaćeno</Text>
+              </View>
+              <View style={styles.legendItem}>
+                <View style={[styles.legendDot, { backgroundColor: '#4F46E5' }]} />
+                <Text style={styles.legendText}>Na putu</Text>
+              </View>
+              <View style={styles.legendItem}>
+                <View style={[styles.legendDot, { backgroundColor: '#D97706' }]} />
+                <Text style={styles.legendText}>U radu</Text>
+              </View>
+              <View style={styles.legendItem}>
+                <View style={[styles.legendDot, { backgroundColor: '#059669' }]} />
+                <Text style={styles.legendText}>Završeno</Text>
+              </View>
+              {myLocation && (
+                <View style={styles.legendItem}>
+                  <Text style={{ fontSize: 11 }}>🚗</Text>
+                  <Text style={[styles.legendText, { fontWeight: '700', color: '#059669' }]}>Moja pozicija</Text>
+                </View>
+              )}
+            </View>
+          </View>
+        )}
+      </View>
+    );
+  };
+
   return (
     <View style={styles.container}>
-      {/* Top Bar */}
+      {/* Top Bar majstora (potpuno odvojena forma bez dispečerskih opcija) */}
       <View style={styles.header}>
         <View style={{ flex: 1 }}>
           <Text style={styles.headerTitle}>Moji radni nalozi</Text>
           <Text style={styles.headerSub}>
-            Majstor: <Text style={{ fontWeight: '800', color: '#0F172A' }}>{user?.ime} {user?.prezime}</Text> • {user?.firma_naziv || 'Servis'}
+            Majstor: <Text style={{ fontWeight: '800', color: '#0F172A' }}>{user?.ime} {user?.prezime}</Text> • {user?.firma_naziv || 'Servisna služba'}
           </Text>
         </View>
 
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-          {(isOwner || isDispatcher || isSuperAdmin) && (
-            <TouchableOpacity
-              style={styles.dispatcherBtn}
-              onPress={onOpenDispatcher}
-              activeOpacity={0.8}
-            >
-              <Text style={styles.dispatcherBtnText}>
-                {isSuperAdmin ? '👑 SuperAdmin' : '📊 Dispečer'}
-              </Text>
-            </TouchableOpacity>
-          )}
-
           <TouchableOpacity style={styles.iconBtn} onPress={fetchOrders} activeOpacity={0.7}>
             <RefreshCw size={17} color="#475569" />
           </TouchableOpacity>
@@ -397,11 +521,11 @@ export default function WorkerOrdersScreen({ onSelectOrder, onOpenDispatcher }) 
       <View style={styles.statsBar}>
         <View style={styles.statPill}>
           <Text style={styles.statNum}>{totalOrders}</Text>
-          <Text style={styles.statText}>Ukupno danas</Text>
+          <Text style={styles.statText}>Dodeljeno danas</Text>
         </View>
         <View style={[styles.statPill, { borderLeftWidth: 1, borderRightWidth: 1, borderColor: '#E2E8F0' }]}>
           <Text style={[styles.statNum, { color: '#0284C7' }]}>{inProgress}</Text>
-          <Text style={styles.statText}>U toku / Na putu</Text>
+          <Text style={styles.statText}>U radu / Na putu</Text>
         </View>
         <View style={styles.statPill}>
           <Text style={[styles.statNum, { color: colors.success }]}>{completedToday}</Text>
@@ -409,11 +533,38 @@ export default function WorkerOrdersScreen({ onSelectOrder, onOpenDispatcher }) 
         </View>
       </View>
 
-      {/* Orders List */}
+      {/* Sadržaj naloga: Desktop dvokolonski prikaz ili Mobilni vertikalni raspored */}
       {loading ? (
         <View style={styles.center}>
           <ActivityIndicator size="large" color={colors.primary} />
-          <Text style={styles.loadingText}>Učitavanje radnih naloga...</Text>
+          <Text style={styles.loadingText}>Učitavanje dodeljenih radnih naloga...</Text>
+        </View>
+      ) : isDesktop ? (
+        <View style={styles.desktopLayout}>
+          {/* Leva kolona: Mapa dolaznih lokacija */}
+          <View style={styles.desktopMapCol}>
+            {renderMapSection()}
+          </View>
+
+          {/* Desna kolona: Lista naloga */}
+          <View style={styles.desktopListCol}>
+            <FlatList
+              data={orders}
+              keyExtractor={(item) => String(item.id)}
+              renderItem={renderOrderItem}
+              contentContainerStyle={styles.listContent}
+              refreshControl={
+                <RefreshControl refreshing={refreshing} onRefresh={fetchOrders} />
+              }
+              ListEmptyComponent={
+                <View style={styles.emptyWrap}>
+                  <CheckCircle size={48} color="#94A3B8" />
+                  <Text style={styles.emptyTitle}>Nemate dodeljenih naloga za danas</Text>
+                  <Text style={styles.emptySub}>Čim dispečer dodeli novi nalog, on će se automatski pojaviti na mapi i u listi.</Text>
+                </View>
+              }
+            />
+          </View>
         </View>
       ) : (
         <FlatList
@@ -421,14 +572,15 @@ export default function WorkerOrdersScreen({ onSelectOrder, onOpenDispatcher }) 
           keyExtractor={(item) => String(item.id)}
           renderItem={renderOrderItem}
           contentContainerStyle={styles.listContent}
+          ListHeaderComponent={renderMapSection}
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={fetchOrders} />
           }
           ListEmptyComponent={
             <View style={styles.emptyWrap}>
               <CheckCircle size={48} color="#94A3B8" />
-              <Text style={styles.emptyTitle}>Nemate aktivnih naloga za danas</Text>
-              <Text style={styles.emptySub}>Čim dispečer dodeli novi nalog, pojaviće se ovde automatski.</Text>
+              <Text style={styles.emptyTitle}>Nemate dodeljenih naloga za danas</Text>
+              <Text style={styles.emptySub}>Čim dispečer dodeli novi nalog, on će se automatski pojaviti na mapi i u listi.</Text>
             </View>
           }
         />
@@ -461,19 +613,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#64748B',
     marginTop: 2
-  },
-  dispatcherBtn: {
-    backgroundColor: '#EFF6FF',
-    borderWidth: 1,
-    borderColor: '#BFDBFE',
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 8
-  },
-  dispatcherBtnText: {
-    color: colors.primary,
-    fontSize: 12,
-    fontWeight: '700'
   },
   iconBtn: {
     width: 36,
@@ -508,10 +647,105 @@ const styles = StyleSheet.create({
   },
   listContent: {
     padding: 14,
-    gap: 12
+    gap: 12,
+    paddingBottom: 28
   },
 
-  // Standardized Card Design
+  // Desktop raspored u 2 kolone
+  desktopLayout: {
+    flex: 1,
+    flexDirection: 'row',
+    padding: 14,
+    gap: 14
+  },
+  desktopMapCol: {
+    flex: 1.1
+  },
+  desktopListCol: {
+    flex: 1
+  },
+
+  // Mapa dolaznih lokacija
+  mapCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    overflow: 'hidden',
+    marginBottom: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    elevation: 2
+  },
+  mapHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    backgroundColor: '#F8FAFC',
+    borderBottomWidth: 1,
+    borderBottomColor: '#E2E8F0'
+  },
+  mapCardTitle: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#0F172A'
+  },
+  clearFocusBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FEE2E2',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    marginRight: 6
+  },
+  clearFocusText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#DC2626'
+  },
+  mapToggleBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: '#FFFFFF',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#E2E8F0'
+  },
+  mapWrapper: {
+    padding: 10
+  },
+  mapLegendRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12,
+    paddingTop: 8,
+    paddingHorizontal: 4,
+    alignItems: 'center'
+  },
+  legendItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4
+  },
+  legendDot: {
+    width: 9,
+    height: 9,
+    borderRadius: 5
+  },
+  legendText: {
+    fontSize: 11,
+    color: '#64748B',
+    fontWeight: '600'
+  },
+
+  // Kartica radnog naloga majstora
   card: {
     backgroundColor: '#FFFFFF',
     borderRadius: 14,
@@ -520,20 +754,25 @@ const styles = StyleSheet.create({
     borderColor: '#CBD5E1',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.04,
-    shadowRadius: 4,
-    elevation: 2,
-    gap: 8
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 2
+  },
+  cardFocused: {
+    borderColor: '#0284C7',
+    borderWidth: 2,
+    backgroundColor: '#F0F9FF'
   },
   cardHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center'
+    alignItems: 'center',
+    marginBottom: 10
   },
   orderNumber: {
     fontSize: 15,
     fontWeight: '900',
-    color: '#0F172A'
+    color: colors.slate900
   },
   urgentBadge: {
     flexDirection: 'row',
@@ -545,107 +784,131 @@ const styles = StyleSheet.create({
   },
   urgentText: {
     fontSize: 10,
-    fontWeight: '900',
+    fontWeight: '800',
     color: '#DC2626'
   },
   statusBadge: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 6,
+    paddingVertical: 3,
+    borderRadius: 8,
     borderWidth: 1
   },
   statusBadgeText: {
-    fontSize: 10.5,
+    fontSize: 11,
     fontWeight: '800'
   },
-
   clientSection: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center'
+    alignItems: 'center',
+    marginBottom: 8
   },
   clientName: {
-    fontSize: 15.5,
-    fontWeight: '800',
-    color: '#0F172A',
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#1E293B',
     flex: 1
   },
   callPill: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: colors.success,
+    backgroundColor: '#059669',
     paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 8
+    paddingVertical: 4,
+    borderRadius: 20
   },
   callPillText: {
     color: '#FFFFFF',
     fontSize: 12,
     fontWeight: '700'
   },
-
+  addressContainer: {
+    marginBottom: 10
+  },
   addressSection: {
     flexDirection: 'row',
     alignItems: 'flex-start',
     backgroundColor: '#F8FAFC',
     padding: 8,
-    borderRadius: 8
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#E2E8F0'
   },
   addressText: {
-    fontSize: 13,
-    color: '#334155',
-    fontWeight: '600'
+    fontSize: 12.5,
+    fontWeight: '600',
+    color: '#334155'
   },
   navHint: {
-    fontSize: 11,
+    fontSize: 10.5,
     color: colors.primary,
     fontWeight: '700',
     marginTop: 2
   },
-
+  mapFocusBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    marginTop: 6,
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    borderRadius: 6,
+    backgroundColor: '#E0F2FE',
+    borderWidth: 1,
+    borderColor: '#BAE6FD'
+  },
+  mapFocusBtnActive: {
+    backgroundColor: '#0284C7',
+    borderColor: '#0284C7'
+  },
+  mapFocusBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#0284C7'
+  },
+  mapFocusBtnTextActive: {
+    color: '#FFFFFF'
+  },
   applianceBox: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#F0F9FF',
-    padding: 7,
-    borderRadius: 6,
+    padding: 8,
+    borderRadius: 8,
+    marginBottom: 8,
     borderWidth: 1,
-    borderColor: '#BAE6FD'
+    borderColor: '#E0F2FE'
   },
   applianceText: {
     fontSize: 12,
-    color: '#0369A1'
+    color: '#0369A1',
+    flex: 1
   },
-
   faultBox: {
-    backgroundColor: '#FFFBEB',
+    backgroundColor: '#F8FAFC',
     padding: 8,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: '#FEF3C7'
+    borderRadius: 8,
+    marginBottom: 12,
+    borderLeftWidth: 3,
+    borderLeftColor: '#F59E0B'
   },
   faultLabel: {
     fontSize: 10.5,
     fontWeight: '700',
-    color: '#B45309'
+    color: '#64748B',
+    marginBottom: 2
   },
   faultText: {
     fontSize: 12,
-    color: '#78350F',
-    marginTop: 1
+    color: '#334155'
   },
-
-  // Action Buttons
   cardActions: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    marginTop: 4,
-    paddingTop: 8,
-    borderTopWidth: 1,
-    borderTopColor: '#F1F5F9'
+    marginTop: 4
   },
   actionBtn: {
     flex: 1.2,
@@ -689,7 +952,6 @@ const styles = StyleSheet.create({
     color: '#334155',
     marginRight: 4
   },
-
   center: {
     flex: 1,
     justifyContent: 'center',

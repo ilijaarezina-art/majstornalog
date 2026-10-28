@@ -1,8 +1,8 @@
 import React, { useRef, useEffect } from 'react';
-import { View, StyleSheet } from 'react-native';
+import { View, StyleSheet, Platform } from 'react-native';
 import { WebView } from 'react-native-webview';
 
-const getMapHtml = (data) => `
+const getMapHtml = () => `
 <!DOCTYPE html>
 <html>
 <head>
@@ -11,7 +11,9 @@ const getMapHtml = (data) => `
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <style>
     * { margin:0; padding:0; box-sizing:border-box; }
-    html, body, #map { width:100%; height:100%; background:#F1F5F9; }
+    html, body, #map { width:100%; height:100%; background:#F1F5F9; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif; }
+    .leaflet-popup-content-wrapper { border-radius: 12px; box-shadow: 0 10px 25px -5px rgba(0,0,0,0.25); padding: 4px; }
+    .leaflet-popup-content { margin: 8px 10px; line-height: 1.4; }
   </style>
 </head>
 <body>
@@ -25,13 +27,22 @@ const getMapHtml = (data) => `
     var geofenceCircle = null;
     var connectLine = null;
     var pinPickerInit = false;
-
     var isPinPickerCurrent = false;
+
+    window.parentSelectOrder = function(orderId) {
+      if (window.ReactNativeWebView) {
+        window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'SELECT_ORDER', orderId: orderId }));
+      } else if (window.parent) {
+        window.parent.postMessage(JSON.stringify({ type: 'SELECT_ORDER', orderId: orderId }), '*');
+      }
+    };
 
     map.on('moveend', function() {
       var center = map.getCenter();
       if (window.ReactNativeWebView) {
         window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'PIN_MOVE_END', lat: center.lat, lng: center.lng }));
+      } else if (window.parent) {
+        window.parent.postMessage(JSON.stringify({ type: 'PIN_MOVE_END', lat: center.lat, lng: center.lng }), '*');
       }
     });
 
@@ -40,6 +51,8 @@ const getMapHtml = (data) => `
         map.panTo(e.latlng);
         if (window.ReactNativeWebView) {
           window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'PIN_MOVE_END', lat: e.latlng.lat, lng: e.latlng.lng }));
+        } else if (window.parent) {
+          window.parent.postMessage(JSON.stringify({ type: 'PIN_MOVE_END', lat: e.latlng.lat, lng: e.latlng.lng }), '*');
         }
       }
     });
@@ -67,8 +80,8 @@ const getMapHtml = (data) => `
         pinPickerInit = false;
       }
 
-      // 2. FOCUSED ORDER MODE
-      if (payload.focusedOrder) {
+      // 2. FOCUSED ORDER MODE (Detaljan pregled jedne intervencije)
+      if (payload.focusedOrder && (!payload.orders || payload.orders.length === 0)) {
         var fo = payload.focusedOrder;
         var cLat = parseFloat(fo.gpsX);
         var cLng = parseFloat(fo.gpsY);
@@ -117,7 +130,138 @@ const getMapHtml = (data) => `
         return;
       }
 
-      // 3. REGULAR WORKER / DISPATCHER
+      // 3. MAJSTOR: PREGLED SVIH DODELJENIH NALOGA I DOLAZNIH LOKACIJA ZA TAJ DAN
+      if (!payload.isDispatcher && payload.orders && payload.orders.length > 0 && !payload.clientLocation) {
+        var focusedMarkerToOpen = null;
+
+        (payload.orders || []).forEach(function(o, idx) {
+          var oLat = parseFloat(o.gpsX);
+          var oLng = parseFloat(o.gpsY);
+          if (!oLat || !oLng) return;
+
+          var oPos = [oLat, oLng];
+          bounds.push(oPos);
+
+          var isFocused = payload.focusedOrder && Number(payload.focusedOrder.id) === Number(o.id);
+          var status = o.status || 'DODELJENO';
+          var isUrgent = o.prioritet === 'HITNO';
+
+          // Boje i statusne oznake prema životnom ciklusu naloga
+          var pinColor = '#0284C7';
+          var statusText = 'Dodeljeno (čeka)';
+          var statusBg = '#E0F2FE';
+          var statusBorder = '#BAE6FD';
+
+          if (status === 'U_RADU') {
+            pinColor = '#D97706';
+            statusText = 'U radu na lokaciji';
+            statusBg = '#FEF3C7';
+            statusBorder = '#FDE68A';
+          } else if (status === 'NA_PUTU') {
+            pinColor = '#4F46E5';
+            statusText = 'Na putu ka adresi';
+            statusBg = '#EEF2FF';
+            statusBorder = '#C7D2FE';
+          } else if (status === 'PRIHVACENO') {
+            pinColor = '#0284C7';
+            statusText = 'Prihvaćeno (spremno)';
+            statusBg = '#E0F2FE';
+            statusBorder = '#BAE6FD';
+          } else if (status === 'ZAVRSENO') {
+            var inGeo = (Number(o.start_u_opsegu) === 1);
+            pinColor = inGeo ? '#059669' : '#DC2626';
+            statusText = inGeo ? 'Završeno i overeno' : 'Završeno (van opsega)';
+            statusBg = inGeo ? '#DEF7EC' : '#FEE2E2';
+            statusBorder = inGeo ? '#BCF0DA' : '#FECACA';
+          } else if (status === 'ODLOZENO') {
+            pinColor = '#DC2626';
+            statusText = 'Odloženo';
+            statusBg = '#FEE2E2';
+            statusBorder = '#FECACA';
+          }
+
+          var orderNumClean = (o.broj_naloga || '').replace(/^[A-Za-z]+-[0-9]+-/, '');
+          var badgeLabel = orderNumClean ? ('#' + orderNumClean) : (idx + 1);
+
+          var pinHtml = '<div style="position:relative;display:flex;align-items:center;justify-content:center;">'
+            + '<div style="background:' + pinColor + ';color:white;width:34px;height:34px;border-radius:50% 50% 50% 0;transform:rotate(-45deg);border:2.5px solid white;display:flex;align-items:center;justify-content:center;box-shadow:0 3px 10px rgba(0,0,0,0.35);' + (isFocused ? 'box-shadow:0 0 0 3px #F59E0B, 0 4px 14px rgba(0,0,0,0.5);' : '') + '">'
+            + '<span style="transform:rotate(45deg);font-size:11px;font-weight:900;">' + badgeLabel + '</span>'
+            + '</div>'
+            + (isUrgent ? '<div style="position:absolute;top:-5px;right:-5px;background:#DC2626;color:white;width:15px;height:15px;border-radius:50%;font-size:9px;font-weight:900;display:flex;align-items:center;justify-content:center;border:1.5px solid white;">!</div>' : '')
+            + '</div>';
+
+          var mIcon = L.divIcon({
+            html: pinHtml,
+            iconSize: [34, 34],
+            iconAnchor: [17, 34],
+            popupAnchor: [0, -32]
+          });
+
+          var marker = L.marker(oPos, { icon: mIcon }).addTo(map);
+
+          var popupHtml = '<div style="font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',Roboto,sans-serif;min-width:210px;padding:2px;">'
+            + '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">'
+            + '<b style="color:#0284C7;font-size:12px;">' + (o.broj_naloga || ('Nalog #' + o.id)) + '</b>'
+            + (isUrgent ? '<span style="background:#FEE2E2;color:#DC2626;font-size:10px;font-weight:800;padding:1px 5px;border-radius:4px;">⚡ HITNO</span>' : '')
+            + '</div>'
+            + '<div style="font-size:13px;font-weight:800;color:#0F172A;margin-bottom:2px;">' + (o.klijent_ime || 'Klijent') + '</div>'
+            + '<div style="font-size:11.5px;color:#475569;margin-bottom:4px;">📍 ' + (o.adresa || '') + (o.sprat_stan ? ' (' + o.sprat_stan + ')' : '') + '</div>'
+            + '<div style="margin-bottom:6px;"><span style="display:inline-block;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:700;background:' + statusBg + ';color:' + pinColor + ';border:1px solid ' + statusBorder + ';">' + statusText + '</span></div>'
+            + (o.opis_kvara ? '<div style="font-size:10.5px;color:#334155;background:#F8FAFC;padding:5px 7px;border-radius:6px;margin-bottom:6px;border:1px solid #E2E8F0;"><b>Kvar:</b> ' + o.opis_kvara + '</div>' : '')
+            + '<button onclick="window.parentSelectOrder(' + o.id + ')" style="width:100%;padding:7px 0;background:#0284C7;color:white;border:none;border-radius:6px;font-size:11.5px;font-weight:800;cursor:pointer;">Otvori radni nalog ↗</button>'
+            + '</div>';
+
+          marker.bindPopup(popupHtml);
+          markers['order_' + o.id] = marker;
+
+          if (isFocused) {
+            focusedMarkerToOpen = marker;
+          }
+        });
+
+        // Trenutna lokacija majstora
+        if (payload.workerLocation && payload.workerLocation.lat) {
+          var mwPos = [payload.workerLocation.lat, payload.workerLocation.lng];
+          bounds.push(mwPos);
+          var mwIcon = L.divIcon({
+            html: '<div style="background:#059669;color:white;width:34px;height:34px;border-radius:50%;border:2.5px solid white;display:flex;align-items:center;justify-content:center;box-shadow:0 3px 8px rgba(0,0,0,0.4);font-size:16px;">🚗</div>',
+            iconSize: [34, 34],
+            iconAnchor: [17, 17],
+            popupAnchor: [0, -16]
+          });
+          var mwm = L.marker(mwPos, { icon: mwIcon }).addTo(map);
+          mwm.bindPopup('<b>🚗 Moja trenutna pozicija</b><br>' + (payload.workerLocation.name || 'Majstor na terenu'));
+          markers['my_location'] = mwm;
+
+          // Ako postoji fokusiran nalog sa koordinatama, crtamo rutu
+          if (payload.focusedOrder && payload.focusedOrder.gpsX && payload.focusedOrder.gpsY) {
+            var fPos = [parseFloat(payload.focusedOrder.gpsX), parseFloat(payload.focusedOrder.gpsY)];
+            var osrmUrl = 'https://router.project-osrm.org/route/v1/driving/' + mwPos[1] + ',' + mwPos[0] + ';' + fPos[1] + ',' + fPos[0] + '?overview=full&geometries=geojson';
+            fetch(osrmUrl).then(function(res){ return res.json(); }).then(function(d){
+              if (d.routes && d.routes.length > 0) {
+                var coords = d.routes[0].geometry.coordinates.map(function(pt) { return [pt[1], pt[0]]; });
+                if (routeLine) map.removeLayer(routeLine);
+                routeLine = L.polyline(coords, { color: '#0284C7', weight: 5, opacity: 0.9 }).addTo(map);
+              }
+            }).catch(function(){});
+          }
+        }
+
+        if (focusedMarkerToOpen) {
+          focusedMarkerToOpen.openPopup();
+          map.setView(focusedMarkerToOpen.getLatLng(), 16);
+          return;
+        }
+
+        if (bounds.length > 1) {
+          map.fitBounds(bounds, { padding: [35, 35], maxZoom: 16 });
+        } else if (bounds.length === 1) {
+          map.setView(bounds[0], 15);
+        }
+        return;
+      }
+
+      // 4. REGULAR WORKER POJEDINACNI NALOG (OrderDetail)
       if (!payload.isDispatcher) {
         var cPos = null;
         if (payload.clientLocation && payload.clientLocation.lat) {
@@ -178,7 +322,6 @@ const getMapHtml = (data) => `
         }
       } else {
         // Dispečerski pregled terena (Prikaz samo aktivnih majstora i pozicije ulogovanog korisnika)
-        // Radni nalog se na mapi prikazuje TEK KADA SE KLIKNE NA NJEGA!
         (payload.workers || []).forEach(function(w) {
           var isFree = !w.radni_status || w.radni_status === 'SLOBODAN' || w.radni_status === 'NEAKTIVAN';
           if (w.gpsX && w.gpsY && !isFree) {
@@ -214,10 +357,19 @@ const getMapHtml = (data) => `
 
     window.addEventListener('message', function(e) {
       try {
-        var payload = JSON.parse(e.data);
+        var payload = typeof e.data === 'string' ? JSON.parse(e.data) : e.data;
         renderLayers(payload);
       } catch(err){}
     });
+
+    // Obavesti roditelja da je Leaflet spreman
+    window.onload = function() {
+      if (window.ReactNativeWebView) {
+        window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'MAP_READY' }));
+      } else if (window.parent) {
+        window.parent.postMessage(JSON.stringify({ type: 'MAP_READY' }), '*');
+      }
+    };
   </script>
 </body>
 </html>
@@ -233,25 +385,55 @@ export default function MapComponent({
   focusedOrder = null,
   isPinPickerMode = false,
   onPinCoordsChange = null,
+  onSelectOrder = null,
   height = 320
 }) {
   const webViewRef = useRef(null);
+  const lastPayloadRef = useRef(null);
 
-  useEffect(() => {
+  const sendPayload = () => {
+    const payload = {
+      clientLocation,
+      workerLocation,
+      startLocation,
+      orders,
+      workers,
+      isDispatcher,
+      focusedOrder,
+      isPinPickerMode
+    };
+    lastPayloadRef.current = payload;
+
     if (webViewRef.current) {
-      const payload = {
-        clientLocation,
-        workerLocation,
-        startLocation,
-        orders,
-        workers,
-        isDispatcher,
-        focusedOrder,
-        isPinPickerMode
-      };
       webViewRef.current.postMessage(JSON.stringify(payload));
     }
+  };
+
+  useEffect(() => {
+    sendPayload();
   }, [clientLocation, workerLocation, startLocation, orders, workers, isDispatcher, focusedOrder, isPinPickerMode]);
+
+  // Web event listener za primanje poruka od iframe-a
+  useEffect(() => {
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      const handleWebMsg = (e) => {
+        try {
+          const data = typeof e.data === 'string' ? JSON.parse(e.data) : e.data;
+          if (data?.type === 'MAP_READY') {
+            if (lastPayloadRef.current && webViewRef.current) {
+              webViewRef.current.postMessage(JSON.stringify(lastPayloadRef.current));
+            }
+          } else if (data?.type === 'SELECT_ORDER' && onSelectOrder) {
+            onSelectOrder(data.orderId);
+          } else if (data?.type === 'PIN_MOVE_END' && onPinCoordsChange) {
+            onPinCoordsChange({ lat: data.lat, lng: data.lng, isMoving: false });
+          }
+        } catch (err) {}
+      };
+      window.addEventListener('message', handleWebMsg);
+      return () => window.removeEventListener('message', handleWebMsg);
+    }
+  }, [onSelectOrder, onPinCoordsChange]);
 
   return (
     <View style={[styles.container, { height }]}>
@@ -260,11 +442,18 @@ export default function MapComponent({
         originWhitelist={['*']}
         source={{ html: getMapHtml() }}
         style={{ flex: 1 }}
+        onLoad={() => {
+          setTimeout(sendPayload, 300);
+        }}
         onMessage={(event) => {
           try {
             const data = JSON.parse(event.nativeEvent.data);
-            if (data.type === 'PIN_MOVE_END' && onPinCoordsChange) {
+            if (data.type === 'MAP_READY') {
+              sendPayload();
+            } else if (data.type === 'PIN_MOVE_END' && onPinCoordsChange) {
               onPinCoordsChange({ lat: data.lat, lng: data.lng, isMoving: false });
+            } else if (data.type === 'SELECT_ORDER' && onSelectOrder) {
+              onSelectOrder(data.orderId);
             }
           } catch (e) {}
         }}
